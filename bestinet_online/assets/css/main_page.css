@@ -1,0 +1,251 @@
+/* ================================================================
+   main_page.css
+   Liberty Insurance Bestinet Online Portal — Policy Confirmation
+   Depends on: bestinet.css
+   ================================================================ */
+
+/* ─── Policy Meta Row ───────────────────────────────────────────── */
+.lb-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .6rem 1.25rem;
+    padding: .55rem .7rem;
+    background: #F8F9FA;
+    border-radius: 5px;
+    margin-top: .5rem;
+    font-size: .8rem;
+}
+.lb-meta-label {
+    font-size: .7rem; font-weight: 600;
+    color: var(--c-muted);
+    text-transform: uppercase; letter-spacing: .3px;
+    min-width: 130px;
+}
+.lb-date-pair { display: flex; align-items: center; gap: .4rem; }
+.lb-date-input {
+    border: 1px solid var(--c-border);
+    border-radius: 5px;
+    padding: .28rem .5rem;
+    font-size: .78rem;
+    color: var(--c-text);
+    background: #fff;
+    width: 118px;
+    outline: none;
+}
+.lb-date-input:focus {
+    border-color: var(--c-navy);
+    box-shadow: 0 0 0 2px rgba(115,214,218,.25);
+}
+.lb-date-sep  { color: var(--c-muted); font-size: .7rem; }
+.lb-date-note { font-weight: 700; font-size: .78rem; }
+
+/* ─── Nationality Pill ──────────────────────────────────────────── */
+.lb-pill {
+    display: inline-block;
+    background: #6C757D1F;
+    color: #0D014B;
+    border-radius: 20px;
+    padding: .1em .55em;
+    font-size: .7rem; font-weight: 600;
+}
+
+/* ─── Clickable link in table ───────────────────────────────────── */
+.lb-link {
+    color: var(--c-navy);
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+}
+.lb-link:hover { color: #1D4ED8; }
+
+/* ─── Worker Count Badge ────────────────────────────────────────── */
+.lb-worker-badge {
+    display: inline-flex; align-items: center; gap: .3rem;
+    background: rgba(13,1,75,.08);
+    color: var(--c-navy);
+    border-radius: 5px;
+    padding: .2rem .55rem;
+    font-size: .75rem; font-weight: 700;
+}
+
+/* ─── View Button (small, inside table) ────────────────────────── */
+.btn-lb-view {
+    background: var(--c-navy);
+    color: #fff;
+    border: none;
+    border-radius: 5px;
+    padding: .25rem .65rem;
+    font-size: .72rem; font-weight: 600;
+    cursor: pointer; white-space: nowrap;
+    transition: background .15s;
+}
+.btn-lb-view:hover { background: #1a0a6e; }
+
+/* ─── Grand Total Bar ───────────────────────────────────────────── */
+.lb-grand-total {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 1rem;
+    background: var(--c-navy);
+    border-radius: 6px;
+    padding: .7rem 1.1rem;
+    margin-top: .75rem;
+}
+.lb-grand-total .gt-lbl {
+    font-size: .8rem; font-weight: 700;
+    color: rgba(255,255,255,.75);
+    text-transform: uppercase; letter-spacing: .4px;
+}
+.lb-grand-total .gt-amt {
+    font-size: 1.1rem; font-weight: 800;
+    color: var(--c-yellow);
+}
+
+/* ─── Declaration Box ───────────────────────────────────────────── */
+.lb-declaration {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: var(--radius);
+    padding: .9rem 1.1rem;
+    display: flex; align-items: flex-start; gap: .7rem;
+}
+.lb-declaration input[type="checkbox"] {
+    width: 17px; height: 17px;
+    flex-shrink: 0; margin-top: 2px;
+    accent-color: var(--c-navy); cursor: pointer;
+}
+.lb-declaration label {
+    font-size: .82rem; color: #78350F;
+    cursor: pointer; line-height: 1.55;
+}
+
+/* ─── Action Bar ────────────────────────────────────────────────── */
+.lb-action-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: .65rem;
+    padding: .85rem 0 .5rem;
+}
+.btn-lb-cancel {
+    background: #fff; color: var(--c-navy);
+    border: 2px solid var(--c-navy);
+    border-radius: var(--radius);
+    padding: .5rem 1.5rem;
+    font-size: .82rem; font-weight: 700;
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.btn-lb-cancel:hover { background: var(--c-navy); color: #fff; }
+.btn-lb-pay {
+    background: var(--c-yellow); color: var(--c-navy);
+    border: 2px solid var(--c-yellow);
+    border-radius: var(--radius);
+    padding: .5rem 1.6rem;
+    font-size: .82rem; font-weight: 700; cursor: pointer;
+    display: inline-flex; align-items: center; gap: .4rem;
+    transition: all .15s; white-space: nowrap;
+}
+.btn-lb-pay:hover { background: #e6bc00; border-color: #e6bc00; }
+
+/* ─── Policy Detail Modal Grid ──────────────────────────────────── */
+.pd-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: .65rem 1.5rem;
+}
+
+.pd-key {
+    background: rgba(255,208,0,.10);
+    border: 1px solid rgba(255,208,0,.45);
+    border-radius: var(--radius);
+    padding: .5rem .7rem;
+}
+
+/* Minimal divider between the policy info and premium sections. */
+.pd-divider {
+    height: 1px;
+    background: #e5e7eb;
+    margin: 1rem 0;
+}
+
+/* Accounting-style premium breakdown — label left, right-aligned amount. */
+.pd-lines {
+    display: flex;
+    flex-direction: column;
+    gap: .5rem;
+    margin-top: 1rem;
+}
+.pd-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+.pd-line-lbl {
+    font-size: .8rem;
+    font-weight: 600;
+    color: var(--c-muted);
+}
+.pd-line-amt {
+    font-size: .85rem;
+    font-weight: 600;
+    color: var(--c-navy);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+/* Net premium — total payable, ruled off above like an accounting subtotal. */
+.pd-net-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: .6rem;
+    padding-top: .7rem;
+    border-top: 2px solid var(--c-navy);
+}
+.pd-net-line .pd-line-lbl {
+    font-size: .9rem;
+    font-weight: 800;
+    color: var(--c-navy);
+}
+.pd-net-amt {
+    font-size: 1.15rem;
+    font-weight: 800;
+    color: var(--c-navy);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+}
+
+
+.lb-modal-context-strip {
+    background: rgba(255,208,0,.08);
+    border-bottom: 1px solid rgba(255,208,0,.25);
+}
+
+.modal-footer .btn-lb-cancel {
+    background: #fff;
+    color: var(--c-navy);
+    border: 2px solid var(--c-navy);
+    border-radius: var(--radius);
+    padding: .4rem 1.2rem;
+    font-size: .82rem; font-weight: 700;
+    cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.modal-footer .btn-lb-cancel:hover { background: var(--c-navy); color: #fff; }
+
+/* ─── Responsive ────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .lb-action-bar { flex-direction: column; align-items: stretch; }
+    .btn-lb-cancel, .btn-lb-pay { width: 100%; justify-content: center; }
+    .lb-grand-total { flex-direction: column; align-items: flex-end; gap: .2rem; }
+    .pd-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+    .lb-meta-row { flex-direction: column; align-items: flex-start; }
+}
