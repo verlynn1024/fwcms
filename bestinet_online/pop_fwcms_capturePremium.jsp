@@ -107,6 +107,36 @@
                         common.fnGetValue2(dRebate), staxAmt, stampFees, "0.00", totPrem,
                         "PREMIUM", SESUSERID, ONLINE_UUID, "I");
                 FWCMSOnline.updateFWCMSONLINETRANSTotal("PREMIUM", SESUSERID, ONLINE_UUID);
+
+                /* Snapshot the FWIG worker particulars into
+                   TB_FWCMS_ONLINE_WORKER so the Guarantee Letter's EMPLOYEES
+                   PARTICULARS LISTING (page 2) prints from the database — the
+                   printing module reads the workers here, never from session.
+                   table_vTable_EMPLOYEE layout (built by check_fwcms_online.jsp):
+                   [2]=name [3]=nationality code [4]=gender [5]=passport
+                   [7]=IG amount (sum insured) [8]=gross premium. The
+                   nationality description is resolved at print time by
+                   FWCMSOnline.getFWIGGLPrintDataOnline. Re-run safe: the
+                   existing rows for this journey/type are cleared first. */
+                FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "I");
+                if (vFwigWorkers != null) {
+                    int workerSeq = 0;
+                    for (int i = 0; i < vFwigWorkers.size(); i++) {
+                        Vector vItem = (Vector) vFwigWorkers.elementAt(i);
+                        if (vItem == null || vItem.size() <= 8) continue;
+                        workerSeq++;
+                        FWCMSOnline.insertFWCMSONLINEWORKER(
+                                ONLINE_UUID, "I", workerSeq,
+                                common.setNullToString((String) vItem.elementAt(2)),  // name
+                                common.setNullToString((String) vItem.elementAt(5)),  // passport
+                                common.setNullToString((String) vItem.elementAt(3)),  // nationality code
+                                "",                                                   // nationality descp (resolved at print)
+                                common.setNullToString((String) vItem.elementAt(4)),  // gender
+                                common.setNullToString((String) vItem.elementAt(7)),  // IG amount
+                                common.setNullToString((String) vItem.elementAt(8)),  // premium
+                                SESUSERID);
+                    }
+                }
             } catch (Exception e) {
                 e.printStackTrace();
                 FWCMSOnline.rollBack();

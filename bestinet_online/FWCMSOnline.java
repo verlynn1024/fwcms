@@ -915,6 +915,10 @@ public class FWCMSOnline extends DB_Contact{
 	   fixed for this deployment (principal 08), so it needs no lookup. */
 	private static final String GL_PRINCIPLE_NAME = "Liberty General Insurance Berhad";
 
+	/* Principal code the portal issues under (principal 08) — used to resolve
+	   the worker nationality code to its TB_FWIGPREM description for the GL. */
+	private static final String GL_PRINCIPLE_CODE = "08";
+
 	/* FWIG Guarantee Letter print model — built ENTIRELY from the Bestinet
 	   online-portal tables (TB_FWCMS_ONLINE + _DTL + _WORKER). The class
 	   tables (TB_FWIGCN / TB_FWIGSCH / TB_FWIGMAST) are NOT read: the GL
@@ -982,6 +986,17 @@ public class FWCMSOnline extends DB_Contact{
 		/* worker listing (G5 snapshot) + nationality summary grouped by
 		   nationality and IG amount, plus the grand total IG amount */
 		ArrayList alWorkers = getFWCMSONLINEWORKERList(UUID, "I");
+		/* Resolve each worker's nationality code to its TB_FWIGPREM
+		   description (as the legacy listing prints); the snapshot stores the
+		   code, the description is looked up here at print time. Fall back to
+		   the code when no description row exists. */
+		for (int i = 0; i < alWorkers.size(); i++){
+			Hashtable htW = (Hashtable) alWorkers.get(i);
+			if (nz((String) htW.get("NATIONALITY_DESCP")).equals("")){
+				htW.put("NATIONALITY_DESCP",
+					resolveFWIGNationality(GL_PRINCIPLE_CODE, (String) htW.get("NATIONALITY")));
+			}
+		}
 		htGL.put("WORKERS", alWorkers);
 
 		ArrayList alSummary = new ArrayList();
@@ -1680,10 +1695,21 @@ public class FWCMSOnline extends DB_Contact{
 	   exist. Passing null / "" (or a missing file) falls back to the static
 	   APPENDIX_PRIVACY_CLAUSE, keeping the old behaviour available. */
 	public void mergeAppendix(String filename, String bannerPath, String cutOff) throws Exception{
-		mergeAppendix(filename, bannerPath, cutOff, null);
+		mergeAppendix(filename, bannerPath, cutOff, null, true);
 	}
 
 	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, true);
+	}
+
+	/* includeImportantNotice=false drops the Important Notice from the front
+	   of the appendix. The FWIG Guarantee Letter does NOT carry the Important
+	   Notice (it is a guarantee to Immigration, not a policy sold to the
+	   employer), so gen_fwcms_pdf.jsp passes false for FWIG_GL; the policy
+	   schedules (FWIG_SCH / FWHS_SCH) pass true and keep it. The Privacy
+	   Clause / Privacy Notice (Eng) / Privacy Notice (BM) always follow. */
+	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
+			boolean includeImportantNotice) throws Exception{
 
 		if (cutOff == null) cutOff = "";
 		cutOff = cutOff.trim().toUpperCase();
@@ -1715,29 +1741,37 @@ public class FWCMSOnline extends DB_Contact{
 			}
 		}
 
-		String[] appendix = new String[4];
-		appendix[0] = bannerPath + "/" + APPENDIX_IMPORTANT_NOTICE;
+		ArrayList appendixList = new ArrayList();
+		/* Important Notice — first in the appendix, but only when the caller
+		   wants it (the Guarantee Letter omits it). */
+		if (includeImportantNotice){
+			appendixList.add(bannerPath + "/" + APPENDIX_IMPORTANT_NOTICE);
+		}else{
+			System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice OMITTED (includeImportantNotice=false)");
+		}
 		/* Privacy Clause: prefer the JSP-rendered PDF (pop_incl_CFMKT.jsp /
 		   pop_fwcms_privacy_clause_print.jsp); fall back to the static file
 		   only when no rendered PDF was supplied or it is unreadable. */
 		if (privacyClausePdf != null && !privacyClausePdf.trim().equals("")
 			&& new File(privacyClausePdf).exists()){
-			appendix[1] = privacyClausePdf;
+			appendixList.add(privacyClausePdf);
 			System.out.println("[FWCMSPRINT] mergeAppendix: Privacy Clause from JSP-rendered PDF ["
 				+ privacyClausePdf + "]");
 		}else{
-			appendix[1] = bannerPath + "/" + APPENDIX_PRIVACY_CLAUSE;
+			String staticClause = bannerPath + "/" + APPENDIX_PRIVACY_CLAUSE;
+			appendixList.add(staticClause);
 			System.out.println("[FWCMSPRINT] mergeAppendix: Privacy Clause from static file ["
-				+ appendix[1] + "] (no JSP-rendered PDF supplied"
+				+ staticClause + "] (no JSP-rendered PDF supplied"
 				+ (privacyClausePdf == null ? "" : " or [" + privacyClausePdf + "] missing") + ")");
 		}
 		if (cutOff.equals("OLD")){
-			appendix[2] = bannerPath + "/" + APPENDIX_PRIVACY_ENG_OLD;
-			appendix[3] = bannerPath + "/" + APPENDIX_PRIVACY_BM_OLD;
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_ENG_OLD);
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_BM_OLD);
 		}else{
-			appendix[2] = bannerPath + "/" + APPENDIX_PRIVACY_ENG;
-			appendix[3] = bannerPath + "/" + APPENDIX_PRIVACY_BM;
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_ENG);
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_BM);
 		}
+		String[] appendix = (String[]) appendixList.toArray(new String[appendixList.size()]);
 
 		PDFMergerUtility pdfMerger = new PDFMergerUtility();
 		ByteArrayOutputStream mergedBytes = new ByteArrayOutputStream();

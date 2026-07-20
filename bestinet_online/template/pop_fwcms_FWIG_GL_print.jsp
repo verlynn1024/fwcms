@@ -28,11 +28,15 @@
         page 2  EMPLOYEES PARTICULARS LISTING        (worker table +
                                                        nationality summary)
 
-     The mandatory appendix - Important Notice, Privacy Clause, Privacy
-     Notice (Eng), Privacy Notice (BM) - is merged onto the stream
-     afterwards by gen_fwcms_pdf.jsp / FWCMSOnline.mergeAppendix
-     (appendixRequired = true for FWIG_GL), so the final PDF carries the
-     letter, the particulars listing and every privacy document.
+     The mandatory appendix - Privacy Clause, Privacy Notice (Eng),
+     Privacy Notice (BM) - is merged onto the stream afterwards by
+     gen_fwcms_pdf.jsp / FWCMSOnline.mergeAppendix (appendixRequired = true
+     for FWIG_GL), so the final PDF carries the letter, the particulars
+     listing and every privacy document. Unlike the policy schedules
+     (FWIG_SCH / FWHS_SCH), the Guarantee Letter does NOT carry the
+     Important Notice - it is a guarantee addressed to Immigration, not a
+     policy sold to the employer - so gen_fwcms_pdf.jsp passes
+     includeImportantNotice=false for FWIG_GL.
 
      Font sizes are emitted quoted (size="2", size="2.5", size="3") so
      FWCMSOnline.normaliseFontSizes maps them to px before rendering, and

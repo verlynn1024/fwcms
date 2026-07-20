@@ -557,9 +557,15 @@
 				privacyClausePdf = "";
 			}
 
-			log(UUID, DOC, "appendix", "merging mandatory appendix (CUT_OFF=" + CUT_OFF + ") into " + mergedFile
+			/* The Guarantee Letter (FWIG_GL) does NOT carry the Important
+			   Notice — it is a guarantee addressed to Immigration, not a
+			   policy sold to the employer. The policy schedules (FWIG_SCH /
+			   FWHS_SCH) keep it. */
+			boolean includeImportantNotice = !DOC.equals("FWIG_GL");
+			log(UUID, DOC, "appendix", "merging mandatory appendix (CUT_OFF=" + CUT_OFF
+				+ ", importantNotice=" + includeImportantNotice + ") into " + mergedFile
 				+ " privacyClausePdf=[" + privacyClausePdf + "]");
-			FWCMSOnline.mergeAppendix(mergedFile, temp_banner_path, CUT_OFF, privacyClausePdf);
+			FWCMSOnline.mergeAppendix(mergedFile, temp_banner_path, CUT_OFF, privacyClausePdf, includeImportantNotice);
 			log(UUID, DOC, "appendix", "appendix merge done");
 		}
 	}
