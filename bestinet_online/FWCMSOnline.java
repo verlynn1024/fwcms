@@ -23,18 +23,6 @@ public class FWCMSOnline extends DB_Contact{
 	common comm 			= new common();
 	SimpleDateFormat timestampFormat3 	= new SimpleDateFormat("yyyyMMddHHmmss");
 
-	/* Legacy class-table DAOs, reused as beans by the issuance controller
-	   (issueMainTables). FWCMSOnline stays a thin controller: it prepares the
-	   journey data from the online tables and delegates every class-table
-	   INSERT to these existing DAOs (DB_FWIG / DB_FWHS) rather than repeating
-	   their SQL. Each bean opens and commits its own connection, so a product
-	   is issued atomically and independently of this controller's connection. */
-	private DB_FWIG dbFWIG = new DB_FWIG();
-	private DB_FWHS dbFWHS = new DB_FWHS();
-
-	private SimpleDateFormat dateFmt = new SimpleDateFormat("yyyyMMdd");
-	private SimpleDateFormat timeFmt = new SimpleDateFormat("HHmmss");
-
 	/* Every date column in TB_FWCMS_ONLINE / TB_FWCMS_ONLINE_DTL is CHAR(14)
 	   yyyyMMddHHmmss (the platform's gateway timestamp format) — generated
 	   here, never by the database. */
@@ -49,21 +37,6 @@ public class FWCMSOnline extends DB_Contact{
 		sValue = sValue.replaceAll(",","").trim();
 		if(sValue.equals("")) sValue = "0";
 		return new java.math.BigDecimal(sValue);
-	}
-
-	/* Clamp a value to its VARCHAR/CHAR column width before binding. The
-	   Bestinet enquiry response and the FWCMS code lookups can hand back a
-	   value wider than the target column (a full-word gender, a spelled-out
-	   nationality, an unusually long name/passport), which DB2 rejects with
-	   SQLCODE -302 / SQLSTATE 22001 (character right-truncation). Because the
-	   worker snapshot is written one row at a time inside a single
-	   transaction, one over-width worker aborts the whole snapshot and leaves
-	   TB_FWCMS_ONLINE_WORKER empty — which then starves TB_FWHSITEM at
-	   issuance. Fitting each value to its width keeps the snapshot intact
-	   (the column widths mirror what the print/issuance reads expect). */
-	private String fit(String sValue,int maxLen){
-		if(sValue == null) return "";
-		return sValue.length() > maxLen ? sValue.substring(0,maxLen) : sValue;
 	}
 
 	/* =====================================================================
@@ -720,35 +693,32 @@ public class FWCMSOnline extends DB_Contact{
 			                 "CREATED_BY,CREATED_DATE)"+
 			                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
 
-			/* Widths mirror TB_FWCMS_ONLINE_WORKER: NAME(120) PASSPORT(30)
-			   NATIONALITY(10) NATIONALITY_DESCP(100) GENDER(2) CREATED_BY(20).
-			   fit() guards against SQLCODE -302 / SQLSTATE 22001. */
 			pstmt = myConn.prepareStatement(myQuery);
-			pstmt.setString(1,fit(UUID,36));
-			pstmt.setString(2,fit(INSTYPE,10));
+			pstmt.setString(1,UUID);
+			pstmt.setString(2,INSTYPE);
 			pstmt.setInt(3,WORKERSEQ);
-			pstmt.setString(4,fit(NAME,120));
-			pstmt.setString(5,fit(PASSPORT,30));
-			pstmt.setString(6,fit(NATIONALITY,10));
-			pstmt.setString(7,fit(NATIONALITYDESCP,100));
-			pstmt.setString(8,fit(GENDER,2));
+			pstmt.setString(4,NAME);
+			pstmt.setString(5,PASSPORT);
+			pstmt.setString(6,NATIONALITY);
+			pstmt.setString(7,NATIONALITYDESCP);
+			pstmt.setString(8,GENDER);
 			pstmt.setBigDecimal(9,toDecimal(IGAMOUNT));
 			pstmt.setBigDecimal(10,toDecimal(PREMIUM));
-			pstmt.setString(11,fit(CREATEDBY,20));
+			pstmt.setString(11,CREATEDBY);
 			pstmt.setString(12,NOW);
 			RowsAffected = pstmt.executeUpdate();
 			pstmt.close();
 
 			if (RowsAffected > 0){
 				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-				pstmt2.setString(1,fit(UUID,36));
-				pstmt2.setString(2,fit(INSTYPE,10));
+				pstmt2.setString(1,UUID);
+				pstmt2.setString(2,INSTYPE);
 				pstmt2.setString(3,String.valueOf(WORKERSEQ));
-				pstmt2.setString(4,fit(NAME,120));
-				pstmt2.setString(5,fit(PASSPORT,30));
-				pstmt2.setString(6,fit(NATIONALITY,10));
-				pstmt2.setString(7,fit(NATIONALITYDESCP,100));
-				pstmt2.setString(8,fit(GENDER,2));
+				pstmt2.setString(4,NAME);
+				pstmt2.setString(5,PASSPORT);
+				pstmt2.setString(6,NATIONALITY);
+				pstmt2.setString(7,NATIONALITYDESCP);
+				pstmt2.setString(8,GENDER);
 				pstmt2.setString(9,toDecimal(IGAMOUNT).toPlainString());
 				pstmt2.setString(10,toDecimal(PREMIUM).toPlainString());
 				pstmt2.setString(11,CREATEDBY);
@@ -1335,18 +1305,34 @@ public class FWCMSOnline extends DB_Contact{
 	}
 
 	/* Class-table enrichment, FWHS: CN header, SCH, plus one Hashtable per
-	   TB_FWHSITEM worker row under key "WORKERS" (ArrayList). */
+	   TB_FWHSITEM worker row under key "WORKERS" (ArrayList). Mirrors
+	   getFWIGPrintData: the policy SCHEDULE (pop_fwcms_FWHS_SCH_print.jsp)
+	   prints the full premium box plus a per-worker listing, so this reads
+	   the occupation/business columns and the TB_FWHSSCH premium breakdown,
+	   and resolves the worker occupation-sector / country descriptions the
+	   legacy pop_cn_fwhs_preview.jsp looked up inline. */
 	public Hashtable getFWHSPrintData(String CNCODE) throws Exception{
 
 		Hashtable htFWHS = new Hashtable();
+		String PRINCIPLE = "";
 
 		/* CN header keys on UKEY and carries the dates (ISSDATE/EFFDATE/
 		   EXPDATE) — TB_FWHSSCH has none of those columns (verified
 		   against the TB_FWHSSCH describe and BestinetXML, which reads
-		   B.EFFDATE/B.EXPDATE from TB_FWHSCN B). */
+		   B.EFFDATE/B.EXPDATE from TB_FWHSCN B). The occupation / business-
+		   registration columns feed the schedule's "Business or Occupation"
+		   and "Business Reg. No. / NRIC" boxes (absent from the online GL
+		   model, so read here). */
+		String occupDescRaw		= "";
+		String occupCode		= "";
+		String natureBusiness	= "";
+		String businessNo		= "";
+		String newIcNo			= "";
+		String oldIcNo			= "";
 		String myQuery = "SELECT NAME,ADDRESS_1,ADDRESS_2,ADDRESS_3,ADDRESS_4,"+
 						 "POSTCODE,STATE,POLNO,ACCODE,CLASS,PRINCIPLE,"+
-						 "ISSDATE,EFFDATE,EXPDATE "+
+						 "ISSDATE,EFFDATE,EXPDATE,"+
+						 "OCCUPATION_DESC,OCCUPATION_CODE,NATURE_BUSINESS,BUSINESS_NO,NEW_IC_NO,OLD_IC_NO "+
 						 "FROM TB_FWHSCN WHERE UKEY=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
@@ -1362,22 +1348,62 @@ public class FWCMSOnline extends DB_Contact{
 			htFWHS.put("POLNO",		nz(rs.getString("POLNO")));
 			htFWHS.put("ACCODE",	nz(rs.getString("ACCODE")));
 			htFWHS.put("CLASS",		nz(rs.getString("CLASS")));
-			htFWHS.put("PRINCIPLE",	nz(rs.getString("PRINCIPLE")));
+			PRINCIPLE = nz(rs.getString("PRINCIPLE"));
+			htFWHS.put("PRINCIPLE",	PRINCIPLE);
 			htFWHS.put("ISSDATE",	nz(rs.getString("ISSDATE")));
 			htFWHS.put("EFFDATE",	nz(rs.getString("EFFDATE")));
 			htFWHS.put("EXPDATE",	nz(rs.getString("EXPDATE")));
+			occupDescRaw	= nz(rs.getString("OCCUPATION_DESC"));
+			occupCode		= nz(rs.getString("OCCUPATION_CODE"));
+			natureBusiness	= nz(rs.getString("NATURE_BUSINESS"));
+			businessNo		= nz(rs.getString("BUSINESS_NO"));
+			newIcNo			= nz(rs.getString("NEW_IC_NO"));
+			oldIcNo			= nz(rs.getString("OLD_IC_NO"));
 		}
 		rs.close();
 		pstmt.close();
 
-		/* SCH keys on UKEY2 — sum insured / FWCMS reference only. */
-		myQuery = "SELECT SUMINS,FWCMSREFNO FROM TB_FWHSSCH WHERE UKEY2=? WITH UR";
+		/* Business/occupation display line: NATURE_BUSINESS resolved via
+		   TB_NMOCCUPATION (MAINCLS='IG') overrides the raw OCCUPATION_CODE,
+		   which fills in for a blank / "-" free-text OCCUPATION_DESC — the
+		   exact precedence the legacy FWHS schedule preview applied. Business
+		   Reg. No. falls back to the (new, else old) NRIC, else the business
+		   number. */
+		String natureDescp = resolveFWIGOccupation(PRINCIPLE, natureBusiness);
+		if (!natureDescp.equals("")) occupCode = natureDescp;
+		if (occupDescRaw.equals("") || occupDescRaw.equals("-")) occupDescRaw = occupCode;
+		String occupationDisplay = occupDescRaw.equals("") ? occupCode : occupDescRaw;
+		if (newIcNo.equals("")) newIcNo = oldIcNo;
+		if (newIcNo.equals("")) newIcNo = businessNo;
+		htFWHS.put("OCCUPATION_DISPLAY",	occupationDisplay);
+		htFWHS.put("BUSINESS_DISPLAY",		newIcNo);
+
+		/* SCH keys on UKEY2 — sum insured / FWCMS reference plus the premium
+		   breakdown (gross, rebate, service tax, TPCA/service + FWCMS fee,
+		   service charge/levy, stamp duty, stamp fees, net) the schedule's
+		   premium box prints. SERVICE_FEE + FWCMS_FEE combine into the TPCA /
+		   Service Fee line, LEVYAMT is the service charge on it — as the
+		   legacy preview computes. */
+		myQuery = "SELECT SUMINS,FWCMSREFNO,GPREM,STAXPCT,STAXAMT,SERVICE_FEE,"+
+				  "FWCMS_FEE,LEVYAMT,STAMPDUTY,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES "+
+				  "FROM TB_FWHSSCH WHERE UKEY2=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
 		rs = pstmt.executeQuery();
 		if (rs.next()){
 			htFWHS.put("SUMINS",		nz(rs.getBigDecimal("SUMINS")));
 			htFWHS.put("FWCMSREFNO",	nz(rs.getString("FWCMSREFNO")));
+			htFWHS.put("GPREM",			nz(rs.getString("GPREM")));
+			htFWHS.put("STAXPCT",		nz(rs.getString("STAXPCT")));
+			htFWHS.put("STAXAMT",		nz(rs.getString("STAXAMT")));
+			htFWHS.put("SERVICE_FEE",	nz(rs.getString("SERVICE_FEE")));
+			htFWHS.put("FWCMS_FEE",		nz(rs.getString("FWCMS_FEE")));
+			htFWHS.put("LEVYAMT",		nz(rs.getString("LEVYAMT")));
+			htFWHS.put("STAMPDUTY",		nz(rs.getString("STAMPDUTY")));
+			htFWHS.put("NETPREM",		nz(rs.getString("NETPREM")));
+			htFWHS.put("REBATEPCT",		nz(rs.getString("REBATEPCT")));
+			htFWHS.put("REBATEAMT",		nz(rs.getString("REBATEAMT")));
+			htFWHS.put("STAMP_FEES",	nz(rs.getString("STAMP_FEES")));
 		}
 		rs.close();
 		pstmt.close();
@@ -1387,9 +1413,12 @@ public class FWCMSOnline extends DB_Contact{
 		   not equality, and order by SEQNO — verified against BestinetXML
 		   (A.UKEY LIKE '<ukey>%') and inputXML (ORDER BY CAST(SEQNO ...)).
 		   The worker name column is EMP_NAME (TB_FWHSITEM has no NAME
-		   column); exposed under the "NAME" key the templates expect. */
+		   column); exposed under the "NAME" key the templates expect. Raw
+		   codes are collected first; the occupation-sector / country
+		   descriptions are resolved in a second pass so no lookup query runs
+		   while the worker ResultSet is still open. */
 		ArrayList alWorkers = new ArrayList();
-		myQuery = "SELECT EMP_NAME,PASSPORT,NATIONALITY,GENDER,SUMINS,PREMIUM "+
+		myQuery = "SELECT EMP_NAME,OCCPSEC,DOB,GENDER,PASSPORT,NATIONALITY,SUMINS,PREMIUM "+
 				  "FROM TB_FWHSITEM WHERE UKEY LIKE ? ORDER BY CAST(SEQNO AS INTEGER) WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE + "%");
@@ -1397,18 +1426,49 @@ public class FWCMSOnline extends DB_Contact{
 		while (rs.next()){
 			Hashtable htWorker = new Hashtable();
 			htWorker.put("NAME",		nz(rs.getString("EMP_NAME")));
+			htWorker.put("OCCPSEC",		nz(rs.getString("OCCPSEC")));
+			htWorker.put("DOB",			nz(rs.getString("DOB")));
+			htWorker.put("GENDER",		nz(rs.getString("GENDER")));
 			htWorker.put("PASSPORT",	nz(rs.getString("PASSPORT")));
 			htWorker.put("NATIONALITY",	nz(rs.getString("NATIONALITY")));
-			htWorker.put("GENDER",		nz(rs.getString("GENDER")));
 			htWorker.put("SUMINS",		nz(rs.getBigDecimal("SUMINS")));
 			htWorker.put("PREMIUM",		nz(rs.getBigDecimal("PREMIUM")));
 			alWorkers.add(htWorker);
 		}
 		rs.close();
 		pstmt.close();
+
+		for (int i = 0; i < alWorkers.size(); i++){
+			Hashtable htWorker = (Hashtable) alWorkers.get(i);
+			htWorker.put("OCCPSEC_DESCP",		resolveOccupSector(PRINCIPLE, (String) htWorker.get("OCCPSEC")));
+			htWorker.put("NATIONALITY_DESCP",	resolveFWIGNationality(PRINCIPLE, (String) htWorker.get("NATIONALITY")));
+		}
 		htFWHS.put("WORKERS", alWorkers);
 
 		return htFWHS;
+	}
+
+	/* TB_OCCUPSECTOR occupation-sector-code → description lookup for the FWHS
+	   schedule's worker listing (INSCODE keyed, as the legacy preview). Blank
+	   code / no match returns "" so the caller can fall back to the raw code.
+	   Uses the connection already open on this instance. */
+	private String resolveOccupSector(String PRINCIPLE, String code) throws Exception{
+		if (code == null) code = "";
+		code = code.trim();
+		if (code.equals("")) return "";
+		String descp = "";
+		String q = "SELECT DESCP FROM TB_OCCUPSECTOR WHERE CODE=? AND INSCODE=? "+
+				   "FETCH FIRST ROWS ONLY WITH UR";
+		PreparedStatement ps = myConn.prepareStatement(q);
+		ps.setString(1, code);
+		ps.setString(2, PRINCIPLE);
+		ResultSet r = ps.executeQuery();
+		if (r.next()){
+			descp = nz(r.getString("DESCP"));
+		}
+		r.close();
+		ps.close();
+		return descp;
 	}
 
 	/* Privacy notice cut-off: TB_CONTROL PRIVACY_NOTICE vs the issue date
@@ -1475,10 +1535,6 @@ public class FWCMSOnline extends DB_Contact{
 
 	/* Appendix inventory (design doc section 8), resolved against
 	   configk.prop template_banner_path at merge time. */
-	/* RETIRED: the Important Notice is no longer a static PDF - it is rendered
-	   from pop_fwcms_important_notice_print.jsp (pop_incl_f2.jsp port) and
-	   passed in as importantNoticePdf, with no static fallback. Kept only for
-	   reference to the retired filename. */
 	private static final String APPENDIX_IMPORTANT_NOTICE	= "Important_Notice.pdf";
 	private static final String APPENDIX_PRIVACY_CLAUSE		= "Privacy_Clause.pdf";
 	private static final String APPENDIX_PRIVACY_ENG		= "Privacy_Notice_Eng.pdf";
@@ -1794,43 +1850,30 @@ public class FWCMSOnline extends DB_Contact{
 	   any missing appendix or merge failure throws so a policy is never
 	   streamed without its notices.
 
-	   Neither the Important Notice nor the Privacy Clause is a static file
-	   in the legacy EASC app - both are JSP includes rendered to PDF at
-	   print time (pop_incl_f2.jsp for the Important Notice, pop_incl_CFMKT.jsp
-	   for the Privacy Clause). gen_fwcms_pdf.jsp loops back to
-	   pop_fwcms_important_notice_print.jsp and pop_fwcms_privacy_clause_print.jsp
-	   and passes the rendered PDFs here.
-
-	   Important Notice: supplied as importantNoticePdf and REQUIRED whenever
-	   includeImportantNotice is true (FWIG_SCH / FWHS_SCH). There is NO static
-	   fallback - the Important_Notice.pdf is retired - so a missing/unreadable
-	   rendered PDF is fatal (a policy is never streamed without its notice).
-
-	   Privacy Clause: supplied as privacyClausePdf; when readable it takes the
-	   Privacy Clause slot, otherwise this falls back to the static
+	   The Privacy Clause is NOT a static file in the legacy EASC app - it
+	   is the JSP include pop_incl_CFMKT.jsp, rendered to PDF at print time.
+	   gen_fwcms_pdf.jsp loops back to pop_fwcms_privacy_clause_print.jsp and
+	   passes the rendered PDF here as privacyClausePdf; when that file is
+	   supplied and readable it takes the Privacy Clause slot, so the clause
+	   comes from the JSP rather than a Privacy_Clause.pdf that does not
+	   exist. Passing null / "" (or a missing file) falls back to the static
 	   APPENDIX_PRIVACY_CLAUSE, keeping the old behaviour available. */
 	public void mergeAppendix(String filename, String bannerPath, String cutOff) throws Exception{
-		mergeAppendix(filename, bannerPath, cutOff, null, null, true);
+		mergeAppendix(filename, bannerPath, cutOff, null, true);
 	}
 
 	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf) throws Exception{
-		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, null, true);
-	}
-
-	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
-			boolean includeImportantNotice) throws Exception{
-		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, null, includeImportantNotice);
+		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, true);
 	}
 
 	/* includeImportantNotice=false drops the Important Notice from the front
 	   of the appendix. The FWIG Guarantee Letter does NOT carry the Important
 	   Notice (it is a guarantee to Immigration, not a policy sold to the
 	   employer), so gen_fwcms_pdf.jsp passes false for FWIG_GL; the policy
-	   schedules (FWIG_SCH / FWHS_SCH) pass true and supply importantNoticePdf.
-	   The Privacy Clause / Privacy Notice (Eng) / Privacy Notice (BM) always
-	   follow. */
+	   schedules (FWIG_SCH / FWHS_SCH) pass true and keep it. The Privacy
+	   Clause / Privacy Notice (Eng) / Privacy Notice (BM) always follow. */
 	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
-			String importantNoticePdf, boolean includeImportantNotice) throws Exception{
+			boolean includeImportantNotice) throws Exception{
 
 		if (cutOff == null) cutOff = "";
 		cutOff = cutOff.trim().toUpperCase();
@@ -1864,20 +1907,9 @@ public class FWCMSOnline extends DB_Contact{
 
 		ArrayList appendixList = new ArrayList();
 		/* Important Notice — first in the appendix, but only when the caller
-		   wants it (the Guarantee Letter omits it). It comes from the JSP-
-		   rendered PDF (pop_fwcms_important_notice_print.jsp); there is NO
-		   static fallback, so a missing/unreadable rendered PDF is fatal. */
+		   wants it (the Guarantee Letter omits it). */
 		if (includeImportantNotice){
-			if (importantNoticePdf != null && !importantNoticePdf.trim().equals("")
-				&& new File(importantNoticePdf).exists()){
-				appendixList.add(importantNoticePdf);
-				System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice from JSP-rendered PDF ["
-					+ importantNoticePdf + "]");
-			}else{
-				throw new Exception("[FWCMSPRINT] mergeAppendix: Important Notice must be JSP-rendered but the "
-					+ "rendered PDF is missing/unreadable and there is NO static fallback: ["
-					+ importantNoticePdf + "]");
-			}
+			appendixList.add(bannerPath + "/" + APPENDIX_IMPORTANT_NOTICE);
 		}else{
 			System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice OMITTED (includeImportantNotice=false)");
 		}
@@ -1936,317 +1968,5 @@ public class FWCMSOnline extends DB_Contact{
 				try { mergedDoc.close(); } catch (Exception ignore) {}
 			}
 		}
-	}
-
-	/* =====================================================================
-	   MAIN-TABLE ISSUANCE (controller)
-
-	   After payment is confirmed the Bestinet journey must land in the SAME
-	   FWCMS class tables the legacy eCover flow uses, so every downstream
-	   module (printing, enquiry, cancellation, endorsement, reporting) reads
-	   a real policy — not just the online-portal tracking rows.
-
-	   issueMainTables() is the controller entry point: it loads the journey
-	   from the online tables (its own getters), delegates the class-table
-	   INSERTs to the legacy DB_FWIG / DB_FWHS beans, then stamps the generated
-	   cover-note / policy number back onto the online DTL row so the UUID
-	   linkage between the portal and the class tables is preserved.
-
-	   Return: the generated "CNCODE^POLNO", or "" when the product row is
-	   absent / already issued. Throws on a class-table failure so the caller
-	   can keep the journey un-issued (nothing half-written) and retry.
-	   ===================================================================== */
-
-	/* Principal (insurer) the portal issues under — Liberty, principal 08. */
-	private static final String ISSUE_PRINCIPLE = "08";
-	private static final String ISSUE_CURRENCY  = "MYR";
-
-	/* Cover-note number sources (deployment-seeded).
-	   FWIG pulls the next free number from the TB_NMNO / NMNO pool via
-	   getCoverNoteNo (marks it DELETED='Y') — the same pool the legacy
-	   pop_cnFWIG_add_route.jsp uses. FWHS increments a TB_CNSERIES running
-	   number via getREFNO. */
-	private static final String FWIG_CN_POOL_TABLE = "TB_NMNO";
-	private static final String FWIG_CN_POOL_FIELD = "NMNO";
-	private static final String FWHS_CN_CLS        = "FWHS";
-
-	/* DEV ONLY: when the FWIG cover-note pool has no free number for the
-	   ACCODE, generate a unique throwaway CN (IGT + timestamp) instead of
-	   failing the issuance. Every run gets a fresh CN so UKEY stays unique.
-	   MUST be false in production — real deployments seed the pool. */
-	private static final boolean FWIG_DEV_CN_FALLBACK = true;
-
-	private double toD(Object o){
-		return toDecimal(nz((o == null) ? "" : o.toString())).doubleValue();
-	}
-
-	/* Per-table insertion tracker. Logs rows affected for every class-table
-	   INSERT so a failed/zero-row write is visible in the app log; a zero-row
-	   result throws so the caller rolls the whole product back (never a
-	   half-written policy). */
-	private void logIns(String CNCODE, String TABLE, int rows) throws Exception{
-		if (rows > 0){
-			System.out.println("[FWCMSISSUE] CNCODE=" + CNCODE + " table=" + TABLE
-				+ " INSERT ok rows=" + rows);
-		} else {
-			System.out.println("[FWCMSISSUE] CNCODE=" + CNCODE + " table=" + TABLE
-				+ " INSERT FAILED rows=" + rows);
-			throw new Exception("Class-table insert affected 0 rows: " + TABLE
-				+ " (CNCODE=" + CNCODE + ")");
-		}
-	}
-
-	/* Number of months of cover from the eff/exp span; FWCMS default "12". */
-	private String monthsOfCover(String eff, String exp){
-		try {
-			if (eff.length() >= 6 && exp.length() >= 6){
-				int m = (Integer.parseInt(exp.substring(0,4)) * 12 + Integer.parseInt(exp.substring(4,6)))
-					  - (Integer.parseInt(eff.substring(0,4)) * 12 + Integer.parseInt(eff.substring(4,6)));
-				if (m > 0) return String.valueOf(m);
-			}
-		} catch (Exception e){ /* fall through */ }
-		return "12";
-	}
-
-	public String issueMainTables(String UUID, String INSTYPE, String USERID) throws Exception{
-
-		Hashtable txn = getFWCMSONLINETRANS(UUID);
-		if (txn == null) return "";
-		Hashtable dtl = getFWCMSONLINEDTL(UUID, INSTYPE);
-		if (dtl == null) return "";
-		/* already issued with a real (non-mock) CN — nothing to do */
-		String existingCN = nz((String) dtl.get("CNCODE"));
-		if ("ISSUED".equals((String) dtl.get("INS_STATUS")) && !existingCN.equals("")
-				&& !existingCN.startsWith("MCK")){
-			return "";
-		}
-		ArrayList workers = getFWCMSONLINEWORKERList(UUID, INSTYPE);
-
-		String result;
-		if ("I".equals(INSTYPE))      result = issueFWIG(txn, dtl, workers, USERID);
-		else if ("H".equals(INSTYPE)) result = issueFWHS(txn, dtl, workers, USERID);
-		else return "";
-
-		/* stamp the real CN/POLNO back onto the online DTL row (UUID linkage) */
-		String[] parts = result.split("\\^", -1);
-		String CNCODE = parts.length > 0 ? parts[0] : "";
-		String POLNO  = parts.length > 1 ? parts[1] : CNCODE;
-		String ISSDATE = nz((String) dtl.get("ISS_DATE"));
-		if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
-		updateFWCMSONLINEDTLIssued(CNCODE, POLNO, ISSDATE, USERID, UUID, INSTYPE);
-
-		return result;
-	}
-
-	/* FWIG (Insurance Guarantee) — TB_TRANSACTION, TB_FWIGCN, TB_FWIGMAST,
-	   TB_FWIGSCH via DB_FWIG. Column contracts verified against
-	   getFWIGPrintData()/inputXML.genFWIGCNXML(). */
-	private String issueFWIG(Hashtable txn, Hashtable dtl, ArrayList workers, String USERID) throws Exception{
-		try {
-			dbFWIG.makeConnection();
-			dbFWIG.setAutoCommitOff();
-
-			String ACCODE   = nz((String) txn.get("ACCODE"));
-			String CONTACTID= nz((String) txn.get("EMPLOYER_ROC"));
-			String ISSDATE  = nz((String) dtl.get("ISS_DATE"));
-			if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
-			String EFFDATE  = nz((String) dtl.get("EFF_DATE"));
-			String EXPDATE  = nz((String) dtl.get("EXP_DATE"));
-			String CNTIME   = timeFmt.format(new Date());
-			String NOMONTH  = monthsOfCover(EFFDATE, EXPDATE);
-
-			String CNCODE = dbFWIG.getCoverNoteNo(ISSUE_PRINCIPLE, ACCODE,
-												  FWIG_CN_POOL_TABLE, FWIG_CN_POOL_FIELD);
-			if (CNCODE == null || CNCODE.equals("")){
-				if (!FWIG_DEV_CN_FALLBACK)
-					throw new Exception("FWIG cover-note pool exhausted / not seeded for ACCODE=" + ACCODE);
-				CNCODE = "IGT" + (System.currentTimeMillis() % 10000000000L);
-				System.out.println("[FWCMSISSUE] FWIG pool empty for ACCODE=" + ACCODE
-					+ " - DEV fallback CN " + CNCODE);
-			}
-			String UKEY  = ISSUE_PRINCIPLE + CNCODE;
-			String POLNO = CNCODE;
-
-			double dSumIns = toD(dtl.get("SUM_INSURED"));
-			double dGross  = toD(dtl.get("GROSS_PREMIUM"));
-			double dRebate = toD(dtl.get("REBATE_AMT"));
-			double dStax   = toD(dtl.get("SERVICE_TAX"));
-			double dStamp  = toD(dtl.get("STAMP_DUTY"));
-			double dNet    = toD(dtl.get("NET_PREMIUM"));
-			double dTot    = dNet;
-			String FWCMSREF = nz((String) dtl.get("BTN_TRANS_REF"));
-			if (FWCMSREF.equals("")) FWCMSREF = nz((String) dtl.get("REFNO"));
-
-			logIns(CNCODE, "TB_TRANSACTION", dbFWIG.insert_transaction("IG", "CN", USERID, ISSDATE, CONTACTID,
-					"N", ISSUE_PRINCIPLE, ACCODE, ISSDATE, "", dTot, CNCODE, "", "", USERID));
-
-			/* Same width guard as FWHS: TB_FWIGCN STATE(20)/TEL_NO_OFFICE(20)/
-			   CONTACTID(20) and BUSINESS_NO(25) are narrower than the portal's
-			   30-char EMPLOYER_STATE/PHONE/ROC, so fit them to avoid SQLCODE
-			   -302 / SQLSTATE 22001. NAME/ADDRESS/OCCUPATION_DESC are 255. */
-			logIns(CNCODE, "TB_FWIGCN", dbFWIG.Insert_FWIGCN(
-					UKEY, CNCODE, POLNO, USERID, ISSUE_PRINCIPLE, ACCODE, USERID, "",
-					"", "F", "N", ISSDATE, EFFDATE, EXPDATE, NOMONTH, CNTIME, "",
-					"", "", nz((String) txn.get("EMPLOYER_NAME")), "",
-					nz((String) txn.get("EMPLOYER_ADDRESS_1")), nz((String) txn.get("EMPLOYER_ADDRESS_2")),
-					nz((String) txn.get("EMPLOYER_ADDRESS_3")), nz((String) txn.get("EMPLOYER_ADDRESS_4")), "",
-					"", "", "", "", fit(nz((String) txn.get("EMPLOYER_STATE")),20), nz((String) txn.get("EMPLOYER_POSTCODE")),
-					nz((String) txn.get("NATURE_BUSINESS")), nz((String) txn.get("NATURE_BUSINESS_DESCP")),
-					"", "", fit(nz((String) txn.get("EMPLOYER_PHONE")),20), "", nz((String) txn.get("EMPLOYER_EMAIL")),
-					"", "", fit(nz((String) txn.get("EMPLOYER_ROC")),25),
-					nz((String) txn.get("NATURE_BUSINESS")), "C", "", "PRINTED", "", "", "", 0d, "",
-					"", "", fit(CONTACTID,20), "N", "N", "", "N", "",
-					"", "", "N", "", "7-08", "N", ""));
-
-			/* MAST ^-delimited worker / nationality-summary lists */
-			String UKEY2 = UKEY;
-			StringBuffer eN=new StringBuffer(), eP=new StringBuffer(), eNat=new StringBuffer();
-			StringBuffer eG=new StringBuffer(), eA=new StringBuffer(), ePr=new StringBuffer();
-			LinkedHashMap sumMap = new LinkedHashMap();
-			double dTotAmt=0d, dTotPrem=0d;
-			for (int i=0; i<workers.size(); i++){
-				Hashtable w = (Hashtable) workers.get(i);
-				if (i>0){ eN.append("^"); eP.append("^"); eNat.append("^"); eG.append("^"); eA.append("^"); ePr.append("^"); }
-				String nat = nz((String) w.get("NATIONALITY"));
-				double amt = toD(w.get("IG_AMOUNT"));
-				double prm = toD(w.get("PREMIUM"));
-				eN.append(nz((String) w.get("NAME")));
-				eP.append(nz((String) w.get("PASSPORT")));
-				eNat.append(nat);
-				eG.append(nz((String) w.get("GENDER")));
-				eA.append(comm.fnFormatNumber(String.valueOf(amt), 4));
-				ePr.append(comm.fnFormatNumber(String.valueOf(prm), 4));
-				dTotAmt += amt; dTotPrem += prm;
-				double[] agg = (double[]) sumMap.get(nat);
-				if (agg == null){ agg = new double[]{0,0}; sumMap.put(nat, agg); }
-				agg[0]+=1; agg[1]+=amt;
-			}
-			StringBuffer sN=new StringBuffer(), sNo=new StringBuffer(), sA=new StringBuffer(), sT=new StringBuffer();
-			boolean first=true;
-			for (Iterator it=sumMap.keySet().iterator(); it.hasNext(); ){
-				String nat=(String) it.next(); double[] agg=(double[]) sumMap.get(nat);
-				if (!first){ sN.append("^"); sNo.append("^"); sA.append("^"); sT.append("^"); }
-				sN.append(nat); sNo.append((int) agg[0]);
-				double per = agg[0]>0 ? agg[1]/agg[0] : 0d;
-				sA.append(comm.fnFormatNumber(String.valueOf(per), 4));
-				sT.append(comm.fnFormatNumber(String.valueOf(agg[1]), 4));
-				first=false;
-			}
-			logIns(CNCODE, "TB_FWIGMAST", dbFWIG.Insert_FWIGMAST(
-					UKEY2, nz((String) txn.get("IMMI_CODE")), nz((String) txn.get("IMMI_DESCP")),
-					nz((String) txn.get("IMMI_ADDRESS")), "", "", "", "", "", "", "", "",
-					"", "", "", "", "0", "0",
-					eN.toString(), eP.toString(), eNat.toString(),
-					"0", ePr.toString(), "", eA.toString(), "",
-					sN.toString(), sNo.toString(), sA.toString(), sT.toString(),
-					"0", "0", dTotAmt, dTotPrem, 0d, eG.toString(), ""));
-
-			logIns(CNCODE, "TB_FWIGSCH", dbFWIG.Insert_FWIGSCH_CFMKT(
-					UKEY2, ISSUE_CURRENCY, ISSUE_CURRENCY, 1d, dSumIns, dSumIns, dGross, dGross,
-					dRebate, 0d, dStax, 8d, dStamp, dNet, 0d, 0d,
-					0d, 0d, dTot, dGross, 0d, 0d,
-					"N", "", FWCMSREF, "", "", "0.00"));
-
-			dbFWIG.conCommit();
-			return CNCODE + "^" + POLNO;
-		}
-		catch (Exception e){ try { dbFWIG.rollBack(); } catch (Exception ig){} throw e; }
-		finally { try { dbFWIG.setAutoCommitOn(); } catch (Exception ig){}
-				  try { dbFWIG.takeDown(); } catch (Exception ig){} }
-	}
-
-	/* FWHS (Hospitalisation Scheme) — TB_TRANSACTION, TB_FWHSCN, TB_FWHSSCH,
-	   TB_FWHSITEM via DB_FWHS. Column contracts verified against
-	   getFWHSPrintData()/inputXML.genFWHSCNXML(). */
-	private String issueFWHS(Hashtable txn, Hashtable dtl, ArrayList workers, String USERID) throws Exception{
-		try {
-			dbFWHS.makeConnection();
-			dbFWHS.setAutoCommitOff();
-
-			String ACCODE   = nz((String) txn.get("ACCODE"));
-			String CONTACTID= nz((String) txn.get("EMPLOYER_ROC"));
-			String ISSDATE  = nz((String) dtl.get("ISS_DATE"));
-			if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
-			String EFFDATE  = nz((String) dtl.get("EFF_DATE"));
-			String EXPDATE  = nz((String) dtl.get("EXP_DATE"));
-			String CNTIME   = timeFmt.format(new Date());
-
-			String CNCODE = dbFWHS.getREFNO(ISSUE_PRINCIPLE, ACCODE, FWHS_CN_CLS);
-			if (CNCODE == null || CNCODE.equals(""))
-				throw new Exception("FWHS running number not seeded (TB_CNSERIES) for ACCODE=" + ACCODE);
-			String UKEY  = ISSUE_PRINCIPLE + CNCODE;
-			String POLNO = CNCODE;
-
-			double dSumIns = toD(dtl.get("SUM_INSURED"));
-			double dGross  = toD(dtl.get("GROSS_PREMIUM"));
-			double dStax   = toD(dtl.get("SERVICE_TAX"));
-			double dStamp  = toD(dtl.get("STAMP_DUTY"));
-			double dSvcFee = toD(dtl.get("SERVICE_FEE"));
-			double dNet    = toD(dtl.get("NET_PREMIUM"));
-			double dTotEmp = workers.size();
-			String FWCMSREF = nz((String) dtl.get("BTN_TRANS_REF"));
-			if (FWCMSREF.equals("")) FWCMSREF = nz((String) dtl.get("REFNO"));
-
-			logIns(CNCODE, "TB_TRANSACTION", dbFWHS.insert_transaction("FWHS", "CN", USERID, ISSDATE, CONTACTID,
-					"N", ISSUE_PRINCIPLE, ACCODE, ISSDATE, "", dNet, CNCODE, "", "", USERID, "PRINTED"));
-
-			/* TB_FWHSCN is narrower than TB_FWCMS_ONLINE on a few columns —
-			   STATE(20), MOBILE_NO(20) and CONTACTID(20) vs the portal's
-			   30-char EMPLOYER_STATE/PHONE/ROC, and BUSINESS_NO(25) vs ROC(30)
-			   — so a full state name / long phone / long ROC would raise
-			   SQLCODE -302 / SQLSTATE 22001. Fit those to their target width;
-			   the free-text NAME/ADDRESS/OCCUPATION_DESC columns are 255 and
-			   comfortably hold the portal's values. */
-			logIns(CNCODE, "TB_FWHSCN", dbFWHS.Insert_FWHSCN2(
-					UKEY, CNCODE, POLNO, USERID, ISSUE_PRINCIPLE, ACCODE, USERID, "",
-					"", "", "", "N", ISSDATE, EFFDATE, EXPDATE, CNTIME,
-					"", "", "", nz((String) txn.get("EMPLOYER_NAME")), "",
-					nz((String) txn.get("EMPLOYER_ADDRESS_1")), nz((String) txn.get("EMPLOYER_ADDRESS_2")),
-					nz((String) txn.get("EMPLOYER_ADDRESS_3")), nz((String) txn.get("EMPLOYER_ADDRESS_4")), "",
-					"", "", "", "", fit(nz((String) txn.get("EMPLOYER_STATE")),20), nz((String) txn.get("EMPLOYER_POSTCODE")),
-					nz((String) txn.get("NATURE_BUSINESS")), nz((String) txn.get("NATURE_BUSINESS_DESCP")), "",
-					"", "", fit(nz((String) txn.get("EMPLOYER_PHONE")),20), nz((String) txn.get("EMPLOYER_EMAIL")), "", "",
-					fit(nz((String) txn.get("EMPLOYER_ROC")),25), nz((String) txn.get("NATURE_BUSINESS")),
-					"C", "PRINTED", "", "", "", 0d, "", "",
-					"", fit(CONTACTID,20), "N", "N", "", "N", "",
-					"", "", "N", "7-08", "", nz((String) txn.get("NATURE_BUSINESS")), "", "", ""));
-
-			String UKEY2 = UKEY;
-			logIns(CNCODE, "TB_FWHSSCH", dbFWHS.Insert_FWHSSCH(
-					UKEY2, dSumIns, dGross, dGross, 0d,
-					0d, dStax, 8d, dSvcFee, 0d, dStamp, dNet, 0d,
-					0d, 0d, 0d, dNet, dGross, 0d, 0d, "",
-					0d, dTotEmp, "", "N", "", FWCMSREF, "",
-					"", "", "", "", "0.00"));
-
-			Vector vItems = new Vector();
-			for (int i=0; i<workers.size(); i++){
-				Hashtable w = (Hashtable) workers.get(i);
-				String sumins  = comm.fnFormatNumber(String.valueOf(toD(w.get("IG_AMOUNT"))), 4);
-				String premium = comm.fnFormatNumber(String.valueOf(toD(w.get("PREMIUM"))), 4);
-				Vector r = new Vector();
-				r.addElement(UKEY + "$1$" + (i+1)); /*0 UKEY*/       r.addElement(String.valueOf(i+1)); /*1 SEQNO*/
-				r.addElement(nz((String) w.get("NAME"))); /*2*/     r.addElement(""); /*3 OCCPSEC*/
-				r.addElement(""); /*4 CARD*/                        r.addElement(""); /*5 EMP_PLACE*/
-				r.addElement(""); /*6 TERM_DATE*/                   r.addElement(""); /*7 DOB*/
-				r.addElement(nz((String) w.get("GENDER"))); /*8*/   r.addElement(nz((String) w.get("PASSPORT"))); /*9*/
-				r.addElement(nz((String) w.get("NATIONALITY"))); /*10*/ r.addElement(""); /*11 WORK_EXP*/
-				r.addElement(sumins); /*12 SUMINS*/                 r.addElement(premium); /*13 PREMIUM*/
-				r.addElement("0.0000"); /*14 SERVICE_FEE*/          r.addElement("0"); /*15 FWCMS_FEE*/
-				r.addElement("0"); /*16 APREM*/                     r.addElement("0"); /*17 ORG_APREM*/
-				r.addElement("0"); /*18 ORG_GPREM*/                 r.addElement("0"); /*19 REBATEAMT*/
-				r.addElement("0"); /*20 STAXAMT*/                   r.addElement("0"); /*21 STAXAMT_TPCA*/
-				r.addElement(""); /*22 INS_STATUS*/                 r.addElement(""); /*23 INSURED_FOR*/
-				r.addElement("N"); /*24 WORK_ID*/
-				vItems.addElement(r);
-			}
-			if (vItems.size() > 0) logIns(CNCODE, "TB_FWHSITEM", dbFWHS.Insert_FWHSITEM(vItems));
-
-			dbFWHS.conCommit();
-			return CNCODE + "^" + POLNO;
-		}
-		catch (Exception e){ try { dbFWHS.rollBack(); } catch (Exception ig){} throw e; }
-		finally { try { dbFWHS.setAutoCommitOn(); } catch (Exception ig){}
-				  try { dbFWHS.takeDown(); } catch (Exception ig){} }
 	}
 }
