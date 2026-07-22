@@ -1943,11 +1943,13 @@ public class FWCMSOnline extends DB_Contact{
 	private static final String ISSUE_PRINCIPLE = "08";
 	private static final String ISSUE_CURRENCY  = "MYR";
 
-	/* Cover-note number sources (deployment-seeded):
-	   FWIG pulls the next free number from a pool (getCoverNoteNo marks it
-	   DELETED='Y'); FWHS increments a TB_CNSERIES running number (getREFNO). */
-	private static final String FWIG_CN_POOL_TABLE = "TB_FWIGRUNNO";
-	private static final String FWIG_CN_POOL_FIELD = "CNCODE";
+	/* Cover-note number sources (deployment-seeded).
+	   FWIG pulls the next free number from the TB_NMNO / NMNO pool via
+	   getCoverNoteNo (marks it DELETED='Y') — the same pool the legacy
+	   pop_cnFWIG_add_route.jsp uses. FWHS increments a TB_CNSERIES running
+	   number via getREFNO. */
+	private static final String FWIG_CN_POOL_TABLE = "TB_NMNO";
+	private static final String FWIG_CN_POOL_FIELD = "NMNO";
 	private static final String FWHS_CN_CLS        = "FWHS";
 
 	private double toD(Object o){
