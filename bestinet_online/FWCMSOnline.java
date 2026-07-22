@@ -2008,10 +2008,38 @@ public class FWCMSOnline extends DB_Contact{
 		return "12";
 	}
 
+	/* TB_TRANSACTION.CLIENTID must hold a TB_CONTACT.AUTONUM: the eCover
+	   dashboard (clientProfile.jsp) joins TB_CONTACT.AUTONUM =
+	   TB_TRANSACTION.CLIENTID, and DB2 implicitly DECFLOAT-casts the char
+	   CLIENTID for that compare — a ROC string there fails the whole
+	   listing with SQLCODE -420. Resolve the employer's contact row by
+	   ROC (BUSINESS_NO), preferring the issuing agent's own contact;
+	   '0' (numeric, joins to nothing) when no contact row exists yet. */
+	private String contactAutonumByROC(String ROC, String USERID) throws Exception{
+		String autonum = "0";
+		if (ROC.equals("")) return autonum;
+
+		String myQuery = "SELECT AUTONUM FROM TB_CONTACT WHERE BUSINESS_NO=? "+
+						 "ORDER BY CASE WHEN USERID=? THEN 0 ELSE 1 END, AUTONUM "+
+						 "FETCH FIRST 1 ROWS ONLY WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, ROC);
+		pstmt.setString(2, USERID);
+		ResultSet rs = pstmt.executeQuery();
+		if (rs.next()) autonum = nz(rs.getString("AUTONUM"));
+		rs.close();
+		pstmt.close();
+
+		if (autonum.equals("")) autonum = "0";
+		return autonum;
+	}
+
 	public String issueMainTables(String UUID, String INSTYPE, String USERID) throws Exception{
 
 		Hashtable txn = getFWCMSONLINETRANS(UUID);
 		if (txn == null) return "";
+		txn.put("CONTACT_AUTONUM",
+				contactAutonumByROC(nz((String) txn.get("EMPLOYER_ROC")), USERID));
 		Hashtable dtl = getFWCMSONLINEDTL(UUID, INSTYPE);
 		if (dtl == null) return "";
 		/* already issued with a real (non-mock) CN — nothing to do */
@@ -2048,6 +2076,7 @@ public class FWCMSOnline extends DB_Contact{
 
 			String ACCODE   = nz((String) txn.get("ACCODE"));
 			String CONTACTID= nz((String) txn.get("EMPLOYER_ROC"));
+			String CLIENTID = nz((String) txn.get("CONTACT_AUTONUM"));
 			String ISSDATE  = nz((String) dtl.get("ISS_DATE"));
 			if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
 			String EFFDATE  = nz((String) dtl.get("EFF_DATE"));
@@ -2077,7 +2106,7 @@ public class FWCMSOnline extends DB_Contact{
 			String FWCMSREF = nz((String) dtl.get("BTN_TRANS_REF"));
 			if (FWCMSREF.equals("")) FWCMSREF = nz((String) dtl.get("REFNO"));
 
-			logIns(CNCODE, "TB_TRANSACTION", dbFWIG.insert_transaction("IG", "CN", USERID, ISSDATE, CONTACTID,
+			logIns(CNCODE, "TB_TRANSACTION", dbFWIG.insert_transaction("IG", "CN", USERID, ISSDATE, CLIENTID,
 					"N", ISSUE_PRINCIPLE, ACCODE, ISSDATE, "", dTot, CNCODE, "", "", USERID));
 
 			/* Same width guard as FWHS: TB_FWIGCN STATE(20)/TEL_NO_OFFICE(20)/
@@ -2165,6 +2194,7 @@ public class FWCMSOnline extends DB_Contact{
 
 			String ACCODE   = nz((String) txn.get("ACCODE"));
 			String CONTACTID= nz((String) txn.get("EMPLOYER_ROC"));
+			String CLIENTID = nz((String) txn.get("CONTACT_AUTONUM"));
 			String ISSDATE  = nz((String) dtl.get("ISS_DATE"));
 			if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
 			String EFFDATE  = nz((String) dtl.get("EFF_DATE"));
@@ -2187,7 +2217,7 @@ public class FWCMSOnline extends DB_Contact{
 			String FWCMSREF = nz((String) dtl.get("BTN_TRANS_REF"));
 			if (FWCMSREF.equals("")) FWCMSREF = nz((String) dtl.get("REFNO"));
 
-			logIns(CNCODE, "TB_TRANSACTION", dbFWHS.insert_transaction("FWHS", "CN", USERID, ISSDATE, CONTACTID,
+			logIns(CNCODE, "TB_TRANSACTION", dbFWHS.insert_transaction("FWHS", "CN", USERID, ISSDATE, CLIENTID,
 					"N", ISSUE_PRINCIPLE, ACCODE, ISSDATE, "", dNet, CNCODE, "", "", USERID, "PRINTED"));
 
 			/* TB_FWHSCN is narrower than TB_FWCMS_ONLINE on a few columns —
