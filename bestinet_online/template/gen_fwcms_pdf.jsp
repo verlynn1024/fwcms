@@ -210,34 +210,23 @@
 							: "Class-table enrichment will run against this CNCODE."));
 				}
 
-				if (DOC.equals("FWIG_GL"))
+				if (htDTL != null && !((String)htDTL.get("CNCODE")).equals(""))
 				{
-					/* 4. guarantee letter: the print model comes ENTIRELY
-					   from the Bestinet online-portal tables
-					   (TB_FWCMS_ONLINE / _DTL / _WORKER) — the class
-					   TB_FWIGCN/SCH/MAST tables are NOT read, so the GL
-					   prints even before class-table issuance exists
-					   (data gaps closed by MIGRATE_FWCMS_GL_ONLINE_GAPS.sql). */
-					htPrint = FWCMSOnline.getFWIGGLPrintDataOnline(UUID);
-					log(UUID, DOC, "load", "getFWIGGLPrintDataOnline(UUID) -> "
-						+ (htPrint == null ? "NULL (journey or FWIG DTL row missing)"
-						: "loaded POLNO=[" + htPrint.get("POLNO") + "] ISSDATE=[" + htPrint.get("ISSDATE")
-						+ "] workers=" + ((ArrayList)htPrint.get("WORKERS")).size()));
-
-					if (htPrint != null)
-					{
-						CUT_OFF = FWCMSOnline.getPrivacyCutOff((String)htPrint.get("ISSDATE"));
-						log(UUID, DOC, "load", "getPrivacyCutOff(ISSDATE=[" + htPrint.get("ISSDATE") + "]) -> CUT_OFF=" + CUT_OFF);
-					}
-				}
-				else if (htDTL != null && !((String)htDTL.get("CNCODE")).equals(""))
-				{
-					/* 4. per-product enrichment via DTL.CNCODE (policy
-					   schedules still render from the class tables) */
+					/* 4. per-product enrichment via DTL.CNCODE — every FWIG /
+					   FWHS document (Guarantee Letter included) renders from
+					   the MAIN class tables, exactly like the legacy eCover
+					   previews; the online DTL row supplies only the
+					   UUID -> CNCODE linkage. */
 					if (INSTYPE.equals("I"))
 						htPrint = FWCMSOnline.getFWIGPrintData((String)htDTL.get("CNCODE"));
 					else
 						htPrint = FWCMSOnline.getFWHSPrintData((String)htDTL.get("CNCODE"));
+
+					/* getFWIGPrintData/getFWHSPrintData return an empty model
+					   (no PRINCIPLE) when the class-table row is missing */
+					if (htPrint != null && ((String)htPrint.get("PRINCIPLE") == null
+						|| ((String)htPrint.get("PRINCIPLE")).equals("")))
+						htPrint = null;
 
 					log(UUID, DOC, "load", "get" + (INSTYPE.equals("I") ? "FWIG" : "FWHS")
 						+ "PrintData(CNCODE=[" + htDTL.get("CNCODE") + "]) -> "
@@ -288,43 +277,11 @@
 	}
 
 	String SUBCODE	= "";
-	if (DOC.equals("FWIG_GL"))
+	if (!DOC.equals("RECEIPT"))
 	{
-		/* Guarantee Letter: rendered ENTIRELY from the Bestinet
-		   online-portal tables (getFWIGGLPrintDataOnline), which are
-		   populated at enquiry + premium capture - well before class-table
-		   issuance. So the GL is gated ONLY on the payment/status mock
-		   (PAID / TRANS_STATUS=S, already checked above) plus the FWIG
-		   product row and its online model. It deliberately does NOT
-		   require INS_STATUS='ISSUED' or a class-table CNCODE - those are
-		   cover-note concepts the online-only GL never reads. */
-		String dtlInsStatus	= (htDTL == null) ? "<htDTL-null>" : (String)htDTL.get("INS_STATUS");
-		if (htDTL == null)
-		{
-			log(UUID, DOC, "guard-gl", "GUARD FIRED - no FWIG product (TB_FWCMS_ONLINE_DTL INSURANCE_TYPE=I) "
-				+ "row for this UUID; nothing to print a Guarantee Letter from.");
-			printErrorPage(out, "No Foreign Worker Guarantee was found for this reference.");
-			return;
-		}
-		if (htPrint == null)
-		{
-			log(UUID, DOC, "guard-gl", "GUARD FIRED - online GL model could not be built "
-				+ "(getFWIGGLPrintDataOnline returned null - journey/FWIG DTL row missing). INS_STATUS=["
-				+ dtlInsStatus + "] (note: ISSUED is NOT required for the GL).");
-			printErrorPage(out, "The Guarantee Letter is not available yet, please try again later.");
-			return;
-		}
-		/* SUBCODE (footer policy line) = online policy number if the status
-		   mock/issuance has stamped one; blank otherwise - the GL footer
-		   simply omits it, it is not required to render the letter. */
-		SUBCODE = (String)htPrint.get("POLNO");
-		log(UUID, DOC, "guard-gl", "PASSED - online GL model built, INS_STATUS=[" + dtlInsStatus
-			+ "], SUBCODE(POLNO)=[" + SUBCODE + "] (GL is payment/status-gated, not issuance-gated)");
-	}
-	else if (!DOC.equals("RECEIPT"))
-	{
-		/* Policy Schedules read the class tables via DTL.CNCODE, so they
-		   still require a real issued cover note. */
+		/* Every FWIG / FWHS document (Guarantee Letter and Policy
+		   Schedules) reads the main class tables via DTL.CNCODE, so they
+		   all require a real issued cover note. */
 		String dtlInsStatus	= (htDTL == null) ? "<htDTL-null>" : (String)htDTL.get("INS_STATUS");
 		String dtlCncode	= (htDTL == null) ? "<htDTL-null>" : (String)htDTL.get("CNCODE");
 		if (htDTL == null || !((String)htDTL.get("INS_STATUS")).equals("ISSUED")

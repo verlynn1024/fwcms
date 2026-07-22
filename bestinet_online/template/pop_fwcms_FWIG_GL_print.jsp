@@ -8,16 +8,16 @@
      (design doc: docs/FWCMS_PRINTING_MODULE_DESIGN.md, sections 2.3 / 4.2 / phase 5)
 
      FWIG Guarantee Letter document template - layout only. Derived from
-     the legacy pop_cn_FWIG_preview.jsp (main EASC app) with the
-     data-access layer swapped: ALL inputs come from the Bestinet
-     online-portal tables - TB_FWCMS_ONLINE (journey/employer/immigration),
-     TB_FWCMS_ONLINE_DTL (guarantee amount, cover note, period of cover,
-     issue date) and TB_FWCMS_ONLINE_WORKER (particulars listing) via
-     FWCMSOnline.getFWIGGLPrintDataOnline. The main class/schedule tables
-     (TB_FWIGCN / TB_FWIGSCH / TB_FWIGMAST) are NOT read, and neither is
-     session state, so the GL prints from the journey record alone -
-     before class-table issuance and after re-login alike. Data gaps
-     closed by docs/sql/MIGRATE_FWCMS_GL_ONLINE_GAPS.sql (G5/G6/G7).
+     the legacy pop_cn_FWIG_preview.jsp (main EASC app): the display
+     fields, HTML layout and display logic follow that preview. ALL data
+     comes from the MAIN class tables - TB_FWIGCN (employer block, dates),
+     TB_FWIGSCH (sum insured, bank-charge indicator, FWCMS ref),
+     TB_FWIGMAST (immigration addressee, worker particulars, nationality
+     summary) plus the TB_MAINPRINCIPLE / TB_STATE / TB_FWIGPREM lookups -
+     via FWCMSOnline.getFWIGPrintData(CNCODE). The Bestinet online-portal
+     tables are touched ONLY to resolve the journey's UUID -> CNCODE
+     linkage (TB_FWCMS_ONLINE_DTL.CNCODE = TB_FWIGCN.UKEY); no displayed
+     value is read from them.
 
      The rendered document has two body sections, split with the plain
      <PAGEBREAK></PAGEBREAK> marker that RP_html2pdf interprets as a page
@@ -31,12 +31,11 @@
      The mandatory appendix - Privacy Clause, Privacy Notice (Eng),
      Privacy Notice (BM) - is merged onto the stream afterwards by
      gen_fwcms_pdf.jsp / FWCMSOnline.mergeAppendix (appendixRequired = true
-     for FWIG_GL), so the final PDF carries the letter, the particulars
-     listing and every privacy document. Unlike the policy schedules
-     (FWIG_SCH / FWHS_SCH), the Guarantee Letter does NOT carry the
-     Important Notice - it is a guarantee addressed to Immigration, not a
-     policy sold to the employer - so gen_fwcms_pdf.jsp passes
-     includeImportantNotice=false for FWIG_GL.
+     for FWIG_GL). Unlike the policy schedules (FWIG_SCH / FWHS_SCH), the
+     Guarantee Letter does NOT carry the Important Notice - it is a
+     guarantee addressed to Immigration, not a policy sold to the
+     employer - so gen_fwcms_pdf.jsp passes includeImportantNotice=false
+     for FWIG_GL.
 
      Font sizes are emitted quoted (size="2", size="2.5", size="3") so
      FWCMSOnline.normaliseFontSizes maps them to px before rendering, and
@@ -46,6 +45,12 @@
 --%><%
 	String TYPE	= common.setNullToString(request.getParameter("TYPE"));
 	String UUID	= common.filterAttack(request.getParameter("UUID"));
+
+	/* [MOCK] the generator forwards its issuance override so the template's
+	   own DB load can resolve a cover note before real issuance lands.
+	   [REMOVE with the mock, together with the gen_fwcms_pdf.jsp forward.] */
+	String MOCK_ISSUED	= common.setNullToString(request.getParameter("MOCK_ISSUED"));
+	String MOCK_CNCODE	= common.setNullToString(request.getParameter("MOCK_CNCODE"));
 
 	/* mirror gen_fwcms_pdf.jsp's [FWCMSPRINT] log prefix so the loopback GRAB
 	   and the template that answers it appear on the same grep. If TYPE is not
@@ -78,33 +83,36 @@
 	}
 
 	/* ------------------------------------------------------------------
-	   Data load (DB-first, online-portal tables ONLY): journey parent +
-	   FWIG DTL row + the GL print model (workers, summary, addressee,
-	   dates) - the same reads gen_fwcms_pdf.jsp guards on before grabbing
-	   this template. No class-table access: the mock payment+status stamp
-	   on pop_fwcms_payment_result.jsp is enough for this template to
-	   render, so the old MOCK_ISSUED/MOCK_CNCODE loopback override is
-	   gone. */
-	Hashtable htTXN		= null;
+	   Data load (main class tables): the online DTL row supplies ONLY the
+	   UUID -> CNCODE linkage; every displayed value comes from
+	   TB_FWIGCN / TB_FWIGSCH / TB_FWIGMAST and their lookup tables
+	   through getFWIGPrintData - the same read the legacy eCover preview
+	   (pop_cn_FWIG_preview.jsp) performs. */
 	Hashtable htDTL		= null;
 	Hashtable htFWIG	= null;
+	String CNCODE		= "";
 
 	try
 	{
 		FWCMSOnline.makeConnection();
-		htTXN = FWCMSOnline.getFWCMSONLINETRANS(UUID);
-		if (htTXN != null)
+		htDTL = FWCMSOnline.getFWCMSONLINEDTL(UUID, "I");
+		if (htDTL != null)
 		{
-			htDTL = FWCMSOnline.getFWCMSONLINEDTL(UUID, "I");
-			if (htDTL != null)
-			{
-				htFWIG = FWCMSOnline.getFWIGGLPrintDataOnline(UUID);
-			}
+			CNCODE = common.setNullToString((String)htDTL.get("CNCODE"));
+			/* [MOCK] fall back to the forwarded cover note when the real
+			   issuance step has not stamped one. [REMOVE with the mock.] */
+			if (CNCODE.equals("") && MOCK_ISSUED.equalsIgnoreCase("Y") && !MOCK_CNCODE.equals(""))
+				CNCODE = MOCK_CNCODE;
+			if (!CNCODE.equals(""))
+				htFWIG = FWCMSOnline.getFWIGPrintData(CNCODE);
 		}
+		/* getFWIGPrintData always returns a Hashtable - treat a missing
+		   TB_FWIGCN row (no PRINCIPLE) as "no data" */
+		if (htFWIG != null && common.setNullToString((String)htFWIG.get("PRINCIPLE")).equals(""))
+			htFWIG = null;
 		System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_GL stage=template-load - "
-			+ "htTXN=" + (htTXN == null ? "NULL" : "ok")
-			+ " htDTL=" + (htDTL == null ? "NULL" : "ok(CNCODE=[" + htDTL.get("CNCODE") + "] INS_STATUS=[" + htDTL.get("INS_STATUS") + "])")
-			+ " htFWIG=" + (htFWIG == null ? "NULL" : "ok"));
+			+ "htDTL=" + (htDTL == null ? "NULL" : "ok(CNCODE=[" + htDTL.get("CNCODE") + "] INS_STATUS=[" + htDTL.get("INS_STATUS") + "])")
+			+ " CNCODE=[" + CNCODE + "] htFWIG=" + (htFWIG == null ? "NULL" : "ok"));
 	}
 	catch (Exception ex)
 	{
@@ -116,72 +124,71 @@
 		FWCMSOnline.takeDown();
 	}
 
-	if (htTXN == null || htDTL == null || htFWIG == null)
+	if (htDTL == null || htFWIG == null)
 	{
 		System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_GL stage=template-guard - "
-			+ "GUARD FIRED - returning error HTML because htTXN=" + (htTXN == null ? "NULL" : "ok")
-			+ " htDTL=" + (htDTL == null ? "NULL" : "ok") + " htFWIG=" + (htFWIG == null ? "NULL" : "ok"));
+			+ "GUARD FIRED - returning error HTML because htDTL=" + (htDTL == null ? "NULL" : "ok")
+			+ " htFWIG=" + (htFWIG == null ? "NULL" : "ok") + " CNCODE=[" + CNCODE + "]");
 		out.println("<html><body><font face='Arial' size=\"2\">Document is not available, please try again.</font></body></html>");
 		return;
 	}
 	System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_GL stage=template-render - data OK, rendering guarantee letter HTML");
 
 	/* ------------------------------------------------------------------
-	   Printing model
+	   Printing model - field-for-field the legacy pop_cn_FWIG_preview.jsp
+	   variables, sourced from the class-table read above
 	   ------------------------------------------------------------------ */
 	SimpleDateFormat timestampFormat2 	= new SimpleDateFormat("dd-MM-yyyy");
 	SimpleDateFormat timestampFormat3 	= new SimpleDateFormat("yyyyMMdd");
 
 	String PRINCIPLE_NAME	= common.setNullToString((String)htFWIG.get("PRINCIPLE_NAME"));
 
-	String CNCODE	= (String)htDTL.get("CNCODE");
-	String POLNO	= (String)htDTL.get("POLICY_NO");
-	if (POLNO.equals("")) POLNO = common.setNullToString((String)htFWIG.get("POLNO"));
+	/* employer identity - TB_FWIGCN, state resolved via TB_STATE (legacy) */
+	String NAME			= common.setNullToString((String)htFWIG.get("NAME"));
+	String ADDRESS_1	= common.setNullToString((String)htFWIG.get("ADDRESS_1"));
+	String ADDRESS_2	= common.setNullToString((String)htFWIG.get("ADDRESS_2"));
+	String ADDRESS_3	= common.setNullToString((String)htFWIG.get("ADDRESS_3"));
+	String ADDRESS_4	= common.setNullToString((String)htFWIG.get("ADDRESS_4"));
+	String POSTCODE		= common.setNullToString((String)htFWIG.get("POSTCODE"));
+	String STATE		= common.setNullToString((String)htFWIG.get("STATE_DESCP"));
 
-	/* employer identity: TXN columns (G1 migration); the htFWIG fallback
-	   keys carry the same journey values (online model, no class tables) */
-	String NAME			= (String)htTXN.get("EMPLOYER_NAME");
-	String ADDRESS_1	= (String)htTXN.get("EMPLOYER_ADDRESS_1");
-	String ADDRESS_2	= (String)htTXN.get("EMPLOYER_ADDRESS_2");
-	String ADDRESS_3	= (String)htTXN.get("EMPLOYER_ADDRESS_3");
-	String ADDRESS_4	= (String)htTXN.get("EMPLOYER_ADDRESS_4");
-	String POSTCODE		= (String)htTXN.get("EMPLOYER_POSTCODE");
-	String STATE		= (String)htTXN.get("EMPLOYER_STATE");
-	if (NAME.equals(""))
-	{
-		NAME		= common.setNullToString((String)htFWIG.get("NAME"));
-		ADDRESS_1	= common.setNullToString((String)htFWIG.get("ADDRESS_1"));
-		ADDRESS_2	= common.setNullToString((String)htFWIG.get("ADDRESS_2"));
-		ADDRESS_3	= common.setNullToString((String)htFWIG.get("ADDRESS_3"));
-		ADDRESS_4	= common.setNullToString((String)htFWIG.get("ADDRESS_4"));
-		POSTCODE	= common.setNullToString((String)htFWIG.get("POSTCODE"));
-		STATE		= common.setNullToString((String)htFWIG.get("STATE"));
-	}
-
+	/* TB_FWIGSCH: sum insured, bank-charge amount (BANK vs INSURANCE
+	   guarantee heading), FWCMS reference */
 	String SUMINS		= common.setNullToString((String)htFWIG.get("SUMINS"));
-	String TOT_AMOUNT	= common.setNullToString((String)htFWIG.get("TOT_AMOUNT"));
+	String BCHRG		= common.setNullToString((String)htFWIG.get("BCHRGAMT"));
+	double dBCHRG		= 0;
+	try { dBCHRG = common.formatdouble(common.fnCutComma(BCHRG)); } catch (Exception eB) {}
 	String FWCMSREFNO	= common.setNullToString((String)htFWIG.get("FWCMSREFNO"));
-	if (FWCMSREFNO.equals("")) FWCMSREFNO = common.setNullToString((String)htDTL.get("REFNO"));
 
-	/* immigration addressee (stored per-record in TB_FWIGMAST) */
+	/* TB_FWIGMAST: immigration addressee + totals */
 	String IMMI_NAME	= common.setNullToString((String)htFWIG.get("IMMI_NAME"));
 	String IMMI_ADDRESS	= common.setNullToString((String)htFWIG.get("IMMI_ADDRESS"));
+	String TOT_AMOUNT	= common.setNullToString((String)htFWIG.get("TOT_AMOUNT"));
 
-	/* period of cover: DTL columns (G2 migration); ISSDATE from the online
-	   model = DTL.ISS_DATE (G6), falling back to the journey's last stamp
-	   date (yyyyMMdd) */
+	/* TB_FWIGCN dates (CHAR(8) yyyyMMdd) */
 	String ISSDATE	= common.setNullToString((String)htFWIG.get("ISSDATE"));
-	String EFFDATE	= (String)htDTL.get("EFF_DATE");
-	String EXPDATE	= (String)htDTL.get("EXP_DATE");
-	if (EFFDATE.equals("")) EFFDATE = common.setNullToString((String)htFWIG.get("EFFDATE"));
-	if (EXPDATE.equals("")) EXPDATE = common.setNullToString((String)htFWIG.get("EXPDATE"));
+	String EFFDATE	= common.setNullToString((String)htFWIG.get("EFFDATE"));
+	String EXPDATE	= common.setNullToString((String)htFWIG.get("EXPDATE"));
 	String dbISSDATE = ISSDATE;
 
-	/* one-line employer address, upper-cased (legacy convention) */
+	/* one-line employer address - the legacy trailing-dot handling and the
+	   TB_STATE description, exactly as pop_cn_FWIG_preview.jsp builds it */
 	String ADDRESS = ADDRESS_1.trim();
-	if (!ADDRESS_2.equals("")) ADDRESS += " " + ADDRESS_2.trim();
-	if (!ADDRESS_3.equals("")) ADDRESS += " " + ADDRESS_3.trim();
-	if (!ADDRESS_4.equals("")) ADDRESS += " " + ADDRESS_4.trim();
+	if (!ADDRESS_2.equals(""))
+	{
+		if (ADDRESS_2.endsWith(".")) ADDRESS_2 = ADDRESS_2.substring(0, ADDRESS_2.length()-1) + ",";
+		ADDRESS += " " + ADDRESS_2.trim();
+	}
+	if (!ADDRESS_3.equals(""))
+	{
+		if (ADDRESS_3.endsWith(".")) ADDRESS_3 = ADDRESS_3.substring(0, ADDRESS_3.length()-1) + ",";
+		ADDRESS += " " + ADDRESS_3.trim();
+	}
+	if (!ADDRESS_4.equals(""))
+	{
+		if (ADDRESS_4.endsWith(".")) ADDRESS_4 = ADDRESS_4.substring(0, ADDRESS_4.length()-1) + ",";
+		ADDRESS += " " + ADDRESS_4.trim();
+	}
 	if (!POSTCODE.equals("")) ADDRESS += " " + POSTCODE.trim();
 	if (!STATE.equals(""))    ADDRESS += " " + STATE.trim();
 
@@ -212,13 +219,16 @@
 	try { if (!EFFDATE.equals("")) EFFDATE = timestampFormat2.format(timestampFormat3.parse(EFFDATE)); } catch (Exception e0) {}
 	try { if (!EXPDATE.equals("")) EXPDATE = timestampFormat2.format(timestampFormat3.parse(EXPDATE)); } catch (Exception e0) {}
 
-	/* worker + nationality-summary rows (built by the DAO, nationality
-	   codes already resolved to descriptions) */
+	/* worker + nationality-summary rows (built by the DAO from the
+	   TB_FWIGMAST ^-delimited lists, nationality codes already resolved to
+	   TB_FWIGPREM descriptions) */
 	ArrayList vItem  = (ArrayList)htFWIG.get("WORKERS");
 	ArrayList vItem1 = (ArrayList)htFWIG.get("SUMMARY");
 	if (vItem  == null) vItem  = new ArrayList();
 	if (vItem1 == null) vItem1 = new ArrayList();
 
+	/* number of workers: the particulars list, else the TB_FWIGMAST
+	   nationality-summary counts (legacy SUM_NOOFWORKER fallback) */
 	int iNoofEmp = vItem.size();
 	if (iNoofEmp == 0)
 	{
@@ -231,8 +241,11 @@
 		iNoofEmp = sumWorkers;
 	}
 
-	/* cover-note number, display form (legacy: common.getKey(...,"-")) */
-	String dispCNCODE = common.getKey(CNCODE, "-");
+	/* cover-note number, display form - the TB_FWIGCN.CNCODE column pushed
+	   through common.getKey(...,"-"), as the legacy preview */
+	String dispCNCODE = common.setNullToString((String)htFWIG.get("CNCODE"));
+	if (dispCNCODE.equals("")) dispCNCODE = CNCODE;
+	dispCNCODE = common.getKey(dispCNCODE, "-");
 
 	/* signature image sizing follows the legacy issue-date thresholds */
 	int nISSDATE = 0;
@@ -283,7 +296,11 @@
     <td align="justify" width="900"><font face="Verdana, Arial, Helvetica, sans-serif" size="2.5"><br>Dear Sir(s),<br><br></font></td>
   </tr>
   <tr>
+<%	if (dBCHRG != 0) { %>
+    <td align="justify" width="900"><font face="Verdana, Arial, Helvetica, sans-serif" size="2.5"><b>BANK GUARANTEE NO: <%= common.stringToHTMLString(dispCNCODE) %> FOR RM<%= common.stringToHTMLString(common.twoDecimal(common.formatfloat(SUMINS))) %> EXPIRING <%= common.stringToHTMLString(EXPDATE) %></b><br><b>________________________________________________________________________________________________</b><br><br></font></td>
+<%	} else { %>
     <td align="justify" width="900"><font face="Verdana, Arial, Helvetica, sans-serif" size="2.5"><b>INSURANCE GUARANTEE NO: <%= common.stringToHTMLString(dispCNCODE) %> FOR RM<%= common.stringToHTMLString(common.twoDecimal(common.formatfloat(SUMINS))) %> EXPIRING <%= common.stringToHTMLString(EXPDATE) %></b><br><b>________________________________________________________________________________________________</b><br><br></font></td>
+<%	} %>
   </tr>
   <tr>
     <td align="justify"><font face="Verdana, Arial, Helvetica, sans-serif" size="2.5"><p align="justify">

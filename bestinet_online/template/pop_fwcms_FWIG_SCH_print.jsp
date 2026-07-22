@@ -7,33 +7,38 @@
      (design doc: docs/FWCMS_PRINTING_MODULE_DESIGN.md, sections 2.3 / 4.2 / phase 5)
 
      FWIG Policy Schedule document template - layout only. Derived from the
-     legacy pop_cn_FWIG_SCH_preview.jsp (main EASC app). Unlike the Guarantee
-     Letter (which renders entirely from the online-portal journey tables via
-     getFWIGGLPrintDataOnline), the SCHEDULE is a policy document: it is only
-     printable once the cover note has been ISSUED, so it enriches from the
-     class tables (TB_FWIGCN / TB_FWIGSCH / TB_FWIGMAST) through
-     FWCMSOnline.getFWIGPrintData(CNCODE) - the same read gen_fwcms_pdf.jsp
-     guards on before grabbing this template. The employer block still prefers
-     the online TXN columns (with the class-table CN as the fallback), matching
-     the Guarantee Letter.
+     legacy pop_cn_FWIG_SCH_preview.jsp (main EASC app): the display fields,
+     HTML layout and display logic follow that preview - the premium box
+     (with the GST/SST branch and the gross-premium rowspan arithmetic),
+     the insured-person listing (occupation sector + country of origin),
+     the Clauses/Warranties table, the issued-by / declaration block
+     (pop_incl_f1 equivalent, rendered inline because the portal generator
+     builds its own page furniture) and the clause-narration section
+     (pop_incl_f3 equivalent). ALL data comes from the MAIN class tables -
+     TB_FWIGCN / TB_FWIGSCH / TB_FWIGMAST plus the TB_MAINPRINCIPLE /
+     TB_STATE / TB_NMOCCUPATION / TB_OCCUPSECTOR / TB_FWIGPREM /
+     TB_AGENT_AM / TB_ACNO_AM / TB_USER_AM / TB_GST_CN / TB_SST /
+     TB_CONTROL / TB_FWIGPERIL / TB_FWIGWARR / TB_NMCLAUSE lookups - via
+     FWCMSOnline.getFWIGPrintData(CNCODE). The Bestinet online-portal
+     tables are touched ONLY to resolve the journey's UUID -> CNCODE
+     linkage (TB_FWCMS_ONLINE_DTL.CNCODE = TB_FWIGCN.UKEY); no displayed
+     value is read from them.
 
-     UNLIKE the legacy preview, the running letterhead header, the page
-     footers (policy-number line), the Important Notice and the privacy
-     appendix are NOT emitted here - the schedule generator adds them:
+     UNLIKE the legacy preview, the running letterhead header (pop_incl_h1)
+     and the Important Notice (pop_incl_f2) plus the privacy appendix are
+     NOT emitted here - the generator adds them:
 
         - gen_fwcms_pdf.jsp (schedulePipeline branch) scrapes the header
           markers below (CATEGO1/2, REFMAI1/2, HEADER1-4) and builds the
           running header via FWCMSOnline.buildHeaderHTML / buildHeaderHTML2,
           rendering this body with a per-page header + footer.
-        - FWCMSOnline.mergeAppendix merges the static Important_Notice.pdf and
-          the privacy documents onto the stream afterwards (appendixRequired =
+        - FWCMSOnline.mergeAppendix merges the Important Notice and the
+          privacy documents onto the stream afterwards (appendixRequired =
           true, includeImportantNotice = true for FWIG_SCH).
 
-     So this template emits ONE body section only (no PAGEBREAK_PRO/INC split):
-     a long worker listing paginates within that section and picks up the
-     continuation header automatically. The legacy Clauses/Warranties, GST/SST
-     tax-invoice and CFMKT blocks are intentionally dropped - they have no
-     online model and are not part of the portal schedule.
+     This template therefore emits TWO body sections split by a plain
+     <PAGEBREAK></PAGEBREAK>: the schedule (premium box, worker listing,
+     clauses, issued-by block) and the clause-narration pages.
 
      Font sizes are emitted quoted (size="2", size="2.5", size="3") so
      FWCMSOnline.normaliseFontSizes maps them to px before rendering.
@@ -79,11 +84,10 @@
 	}
 
 	/* ------------------------------------------------------------------
-	   Data load: journey parent + FWIG DTL row (for the cover note +
-	   effective/expiry dates) + class-table schedule model. The schedule
-	   is issuance-gated, so the cover note (DTL.CNCODE, or the mock
-	   override) drives the class-table enrichment. */
-	Hashtable htTXN		= null;
+	   Data load (main class tables): the online DTL row supplies ONLY the
+	   UUID -> CNCODE linkage; every displayed value comes from the class
+	   tables through getFWIGPrintData - the same read the legacy eCover
+	   preview (pop_cn_FWIG_SCH_preview.jsp) performs. */
 	Hashtable htDTL		= null;
 	Hashtable htFWIG	= null;
 	String CNCODE		= "";
@@ -91,24 +95,23 @@
 	try
 	{
 		FWCMSOnline.makeConnection();
-		htTXN = FWCMSOnline.getFWCMSONLINETRANS(UUID);
-		if (htTXN != null)
+		htDTL = FWCMSOnline.getFWCMSONLINEDTL(UUID, "I");
+		if (htDTL != null)
 		{
-			htDTL = FWCMSOnline.getFWCMSONLINEDTL(UUID, "I");
-			if (htDTL != null)
-			{
-				CNCODE = common.setNullToString((String)htDTL.get("CNCODE"));
-				/* [MOCK] fall back to the forwarded cover note when the real
-				   issuance step has not stamped one. [REMOVE with the mock.] */
-				if (CNCODE.equals("") && MOCK_ISSUED.equalsIgnoreCase("Y") && !MOCK_CNCODE.equals(""))
-					CNCODE = MOCK_CNCODE;
-				if (!CNCODE.equals(""))
-					htFWIG = FWCMSOnline.getFWIGPrintData(CNCODE);
-			}
+			CNCODE = common.setNullToString((String)htDTL.get("CNCODE"));
+			/* [MOCK] fall back to the forwarded cover note when the real
+			   issuance step has not stamped one. [REMOVE with the mock.] */
+			if (CNCODE.equals("") && MOCK_ISSUED.equalsIgnoreCase("Y") && !MOCK_CNCODE.equals(""))
+				CNCODE = MOCK_CNCODE;
+			if (!CNCODE.equals(""))
+				htFWIG = FWCMSOnline.getFWIGPrintData(CNCODE);
 		}
+		/* getFWIGPrintData always returns a Hashtable - treat a missing
+		   TB_FWIGCN row (no PRINCIPLE) as "no data" */
+		if (htFWIG != null && common.setNullToString((String)htFWIG.get("PRINCIPLE")).equals(""))
+			htFWIG = null;
 		System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_SCH stage=template-load - "
-			+ "htTXN=" + (htTXN == null ? "NULL" : "ok")
-			+ " htDTL=" + (htDTL == null ? "NULL" : "ok(CNCODE=[" + htDTL.get("CNCODE") + "] INS_STATUS=[" + htDTL.get("INS_STATUS") + "])")
+			+ "htDTL=" + (htDTL == null ? "NULL" : "ok(CNCODE=[" + htDTL.get("CNCODE") + "] INS_STATUS=[" + htDTL.get("INS_STATUS") + "])")
 			+ " CNCODE=[" + CNCODE + "] htFWIG=" + (htFWIG == null ? "NULL" : "ok"));
 	}
 	catch (Exception ex)
@@ -121,63 +124,64 @@
 		FWCMSOnline.takeDown();
 	}
 
-	if (htTXN == null || htDTL == null || htFWIG == null)
+	if (htDTL == null || htFWIG == null)
 	{
 		System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_SCH stage=template-guard - "
-			+ "GUARD FIRED - returning error HTML because htTXN=" + (htTXN == null ? "NULL" : "ok")
-			+ " htDTL=" + (htDTL == null ? "NULL" : "ok") + " htFWIG=" + (htFWIG == null ? "NULL" : "ok")
-			+ " CNCODE=[" + CNCODE + "]");
+			+ "GUARD FIRED - returning error HTML because htDTL=" + (htDTL == null ? "NULL" : "ok")
+			+ " htFWIG=" + (htFWIG == null ? "NULL" : "ok") + " CNCODE=[" + CNCODE + "]");
 		out.println("<html><body><font face='Arial' size=\"2\">Document is not available, please try again.</font></body></html>");
 		return;
 	}
 	System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_SCH stage=template-render - data OK, rendering policy schedule HTML");
 
 	/* ------------------------------------------------------------------
-	   Printing model
+	   Printing model - field-for-field the legacy pop_cn_FWIG_SCH_preview
+	   variables, sourced from the class-table read above
 	   ------------------------------------------------------------------ */
 	SimpleDateFormat timestampFormat2	= new SimpleDateFormat("dd-MM-yyyy");
 	SimpleDateFormat timestampFormat3	= new SimpleDateFormat("yyyyMMdd");
 	DecimalFormat df1					= new DecimalFormat("000");
 
-	/* cover-note number (e-Policy No. box); the footer policy-number line is
+	String PRINCIPLE	= common.setNullToString((String)htFWIG.get("PRINCIPLE"));
+
+	/* cover-note number (e-Policy No. box) - the TB_FWIGCN.CNCODE column,
+	   as the legacy preview prints it; the footer policy-number line is
 	   added by the generator, so it is not printed in this body */
-	String dispCNCODE	= CNCODE;
+	String dispCNCODE	= common.setNullToString((String)htFWIG.get("CNCODE"));
+	if (dispCNCODE.equals("")) dispCNCODE = CNCODE;
 
-	/* agent code (agency-name resolution is a multi-table lookup the online
-	   model does not carry, so only the code prints) */
-	String ACCODE	= common.setNullToString((String)htFWIG.get("ACCODE"));
+	/* agent box: TB_AGENT_AM.FWIG_SIGN picks "Agent Code" vs "Agent Code &
+	   Name" (with the TB_ACNO_AM -> TB_USER_AM agency name), as legacy */
+	String ACCODE		= common.setNullToString((String)htFWIG.get("ACCODE"));
+	String AGENCY_NAME	= common.setNullToString((String)htFWIG.get("AGENCY_NAME"));
+	String specialAgent	= common.setNullToString((String)htFWIG.get("SPECIAL_AGENT"));
+	String ISSUEDBY		= common.setNullToString((String)htFWIG.get("ISSUEDBY"));
 
-	/* employer identity: TXN columns (G1 migration) preferred, class-table CN
-	   as the fallback - the same precedence the Guarantee Letter applies */
-	String NAME			= common.setNullToString((String)htTXN.get("EMPLOYER_NAME"));
-	String ADDRESS_1	= common.setNullToString((String)htTXN.get("EMPLOYER_ADDRESS_1"));
-	String ADDRESS_2	= common.setNullToString((String)htTXN.get("EMPLOYER_ADDRESS_2"));
-	String ADDRESS_3	= common.setNullToString((String)htTXN.get("EMPLOYER_ADDRESS_3"));
-	String ADDRESS_4	= common.setNullToString((String)htTXN.get("EMPLOYER_ADDRESS_4"));
-	String POSTCODE		= common.setNullToString((String)htTXN.get("EMPLOYER_POSTCODE"));
-	if (NAME.equals(""))
-	{
-		NAME		= common.setNullToString((String)htFWIG.get("NAME"));
-		ADDRESS_1	= common.setNullToString((String)htFWIG.get("ADDRESS_1"));
-		ADDRESS_2	= common.setNullToString((String)htFWIG.get("ADDRESS_2"));
-		ADDRESS_3	= common.setNullToString((String)htFWIG.get("ADDRESS_3"));
-		ADDRESS_4	= common.setNullToString((String)htFWIG.get("ADDRESS_4"));
-		POSTCODE	= common.setNullToString((String)htFWIG.get("POSTCODE"));
-	}
+	/* employer identity: class-table TB_FWIGCN only */
+	String NAME			= common.setNullToString((String)htFWIG.get("NAME"));
+	String ADDRESS_1	= common.setNullToString((String)htFWIG.get("ADDRESS_1"));
+	String ADDRESS_2	= common.setNullToString((String)htFWIG.get("ADDRESS_2"));
+	String ADDRESS_3	= common.setNullToString((String)htFWIG.get("ADDRESS_3"));
+	String ADDRESS_4	= common.setNullToString((String)htFWIG.get("ADDRESS_4"));
+	String POSTCODE		= common.setNullToString((String)htFWIG.get("POSTCODE"));
 
-	/* business / occupation display line (resolved in the DAO) */
+	/* business / occupation display line (resolved in the DAO with the
+	   legacy TRADE > OCCUPATION_CODE > OCCUPATION_DESC precedence) */
 	String OCCUPATION	= common.setNullToString((String)htFWIG.get("OCCUPATION_DISPLAY"));
 	String BUSINESS_NO	= common.setNullToString((String)htFWIG.get("BUSINESS_DISPLAY"));
 	String FWCMSREFNO	= common.setNullToString((String)htFWIG.get("FWCMSREFNO"));
-	if (FWCMSREFNO.equals("")) FWCMSREFNO = common.setNullToString((String)htDTL.get("REFNO"));
 
-	/* period of insurance: DTL columns (G2 migration), class-table CN fallback */
-	String EFFDATE	= common.setNullToString((String)htDTL.get("EFF_DATE"));
-	String EXPDATE	= common.setNullToString((String)htDTL.get("EXP_DATE"));
-	if (EFFDATE.equals("")) EFFDATE = common.setNullToString((String)htFWIG.get("EFFDATE"));
-	if (EXPDATE.equals("")) EXPDATE = common.setNullToString((String)htFWIG.get("EXPDATE"));
+	/* dates: class-table TB_FWIGCN only */
+	String ISSDATE	= common.setNullToString((String)htFWIG.get("ISSDATE"));
+	String EFFDATE	= common.setNullToString((String)htFWIG.get("EFFDATE"));
+	String EXPDATE	= common.setNullToString((String)htFWIG.get("EXPDATE"));
+	String ISSTIME	= common.setNullToString((String)htFWIG.get("ISSTIME"));
+	String PROPOSAL_DATE	= common.setNullToString((String)htFWIG.get("PROPOSAL_DATE"));
+	String PREVPOL		= common.setNullToString((String)htFWIG.get("PREVPOL"));
+	String MASTERPOL	= common.setNullToString((String)htFWIG.get("MASTERPOL"));
+	String MASTERIND	= common.setNullToString((String)htFWIG.get("MASTERIND"));
 
-	/* premium breakdown: class-table TB_FWIGSCH (via the extended DAO) */
+	/* premium breakdown: class-table TB_FWIGSCH */
 	String GPREM		= common.setNullToString((String)htFWIG.get("GPREM"));
 	String STAXAMT		= common.setNullToString((String)htFWIG.get("STAXAMT"));
 	String STAXPCT		= common.setNullToString((String)htFWIG.get("STAXPCT"));
@@ -190,6 +194,50 @@
 	/* STFee_FT_A5 - the RM10 stamp-fees row only shows when it is charged */
 	boolean showStampFees = STAMP_FEES.equals("10.00");
 
+	/* GST record + SST switch-over (TB_GST_CN / TB_SST), the exact legacy
+	   trigger logic: a GST_RT on the cover note arms the GST row, but an
+	   issue date on/after the SST effective date forces the Service Tax
+	   row (GST_TRIGGER=N) and defaults GST_RT to "SST" ("SR" before it) */
+	String GST_PCT		= common.setNullToString((String)htFWIG.get("GST_PCT"));
+	String GST_AMT		= common.setNullToString((String)htFWIG.get("GST_AMT"));
+	String GST_RT		= common.setNullToString((String)htFWIG.get("GST_RT"));
+	String GST_TAX_NO	= common.setNullToString((String)htFWIG.get("GST_TAX_NO"));
+	String GST_TRIGGER	= "";
+	if (!GST_RT.equals("")) GST_TRIGGER = "Y";
+
+	Date today = new Date();
+	try { if (!ISSDATE.equals("")) today = timestampFormat3.parse(ISSDATE); } catch (Exception e0) {}
+
+	String SST_EFFDATE_1 = common.setNullToString((String)htFWIG.get("SST_EFFDATE"));
+	try
+	{
+		Date SST_EFFDATE = timestampFormat3.parse(SST_EFFDATE_1);
+		if (today.after(SST_EFFDATE) || today.compareTo(SST_EFFDATE) == 0)
+		{
+			GST_TRIGGER = "N";
+			if (GST_RT.equals("")) GST_RT = "SST";
+		}
+		else
+		{
+			if (GST_RT.equals("")) GST_RT = "SR";
+		}
+	}
+	catch (Exception e0)
+	{
+		GST_TRIGGER = "N";
+		if (GST_RT.equals("")) GST_RT = "SST";
+	}
+
+	/* clause printing control date (TB_CONTROL CLAUSE_DATE / FWIGFWHS) */
+	String CLAUSE_PRINT = "N";
+	try
+	{
+		Date CLAUSE_EFFDATE = timestampFormat3.parse(common.setNullToString((String)htFWIG.get("CLAUSE_EFFDATE")));
+		if (today.after(CLAUSE_EFFDATE) || today.compareTo(CLAUSE_EFFDATE) == 0)
+			CLAUSE_PRINT = "Y";
+	}
+	catch (Exception e0) {}
+
 	/* number + percentage formatting (mirrors the legacy schedule preview) */
 	try { if (!GPREM.equals(""))     GPREM     = common.twoDecimal(common.formatfloat(GPREM)); } catch (Exception e0) {}
 	try { if (!STAXAMT.equals(""))   STAXAMT   = common.twoDecimal(common.formatfloat(STAXAMT)); } catch (Exception e0) {}
@@ -199,20 +247,57 @@
 	try { if (!REBATEPCT.equals("")) REBATEPCT = common.twoDecimal(common.formatfloat(REBATEPCT)); } catch (Exception e0) {}
 	if (STAXPCT.equals("")) STAXPCT = "0.00";
 	try { STAXPCT = common.fnFormatNumber(common.roundTwoDecimal(common.fnCutComma(STAXPCT)), 0); } catch (Exception e0) {}
-
-	boolean showRebate = !REBATEAMT.equals("") && !REBATEAMT.startsWith("0.00");
-
-	/* Total Payable (OTC) - rounded to the nearest cent for over-the-counter */
-	String NETPREM_OTC = NETPREM;
-	try { NETPREM_OTC = common.fnFormatComma(common.roundTwoDecimal(common.fnCutComma(NETPREM))); } catch (Exception e0) {}
+	try { if (!GST_PCT.equals("")) GST_PCT = common.fnFormatNumber(GST_PCT, 0); } catch (Exception e0) {}
+	try { if (!GST_AMT.equals("")) GST_AMT = common.twoDecimal(common.formatfloat(GST_AMT)); } catch (Exception e0) {}
 
 	/* date formatting yyyyMMdd -> dd-MM-yyyy */
+	try { if (!ISSDATE.equals("")) ISSDATE = timestampFormat2.format(timestampFormat3.parse(ISSDATE)); } catch (Exception e0) {}
 	try { if (!EFFDATE.equals("")) EFFDATE = timestampFormat2.format(timestampFormat3.parse(EFFDATE)); } catch (Exception e0) {}
 	try { if (!EXPDATE.equals("")) EXPDATE = timestampFormat2.format(timestampFormat3.parse(EXPDATE)); } catch (Exception e0) {}
+	try { if (!PROPOSAL_DATE.equals("")) PROPOSAL_DATE = timestampFormat2.format(timestampFormat3.parse(PROPOSAL_DATE)); } catch (Exception e0) {}
+	if (PROPOSAL_DATE.equals("")) PROPOSAL_DATE = ISSDATE;
 
-	/* worker rows (class-table TB_FWIGMAST, nationality already resolved) */
-	ArrayList vItem = (ArrayList)htFWIG.get("WORKERS");
-	if (vItem == null) vItem = new ArrayList();
+	/* period-of-insurance start time: the cover-note time on a same-day
+	   effective date, 00:00:01AM otherwise (legacy) */
+	String ISS_CNTIME1 = "";
+	try
+	{
+		Date d1 = timestampFormat2.parse(EFFDATE);
+		Date d2 = timestampFormat2.parse(ISSDATE);
+		if (d1.equals(d2))
+			ISS_CNTIME1 = ISSTIME;
+		else
+			ISS_CNTIME1 = "00:00:01AM";
+	}
+	catch (Exception e0) {}
+
+	/* Total Payable (OTC) row only prints for issues on/after 01-04-2008
+	   (legacy bIssdate rule) */
+	boolean bIssdate = false;
+	try
+	{
+		Date b1 = timestampFormat2.parse(ISSDATE);
+		Date b2 = timestampFormat2.parse("01-04-2008");
+		if (b1.equals(b2) || b1.after(b2)) bIssdate = true;
+	}
+	catch (Exception e0) {}
+
+	/* gross-premium rowspan arithmetic, exactly as the legacy preview */
+	int grossPremium_rowSpan = 1;					// Gross Premium row
+	if (!REBATEAMT.startsWith("0.00")) grossPremium_rowSpan++;
+	if (!GST_RT.equals("")) grossPremium_rowSpan++;
+	if (showStampFees) grossPremium_rowSpan++;
+	grossPremium_rowSpan++;							// Total Payable
+	if (bIssdate) grossPremium_rowSpan++;			// Total Payable (OTC)
+
+	/* worker rows (class-table TB_FWIGMAST ^-lists, occupation sector +
+	   country resolved in the DAO) and the clause / narration lists */
+	ArrayList vItem			= (ArrayList)htFWIG.get("WORKERS");
+	ArrayList vClause_Warr	= (ArrayList)htFWIG.get("CLAUSES");
+	ArrayList vNARRATION	= (ArrayList)htFWIG.get("NARRATIONS");
+	if (vItem == null)			vItem = new ArrayList();
+	if (vClause_Warr == null)	vClause_Warr = new ArrayList();
+	if (vNARRATION == null)		vNARRATION = new ArrayList();
 %><%--
    ============ HEADER MARKERS ============
    Scraped by gen_fwcms_pdf.jsp (FWCMSOnline.scrapeMarkers) to build the
@@ -238,7 +323,8 @@
 <%-- ===== Insured / policy / premium box ===== --%>
 <table width="100%" border="1" cellspacing="0" cellpadding="3">
   <tr>
-    <td bordercolor="#000000" rowspan="2" colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Name and Address of Insured / <i>Nama dan Alamat Pihak Diinsuranskan</i><br>
+    <td bordercolor="#000000" rowspan="2" colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Name and Address of Insured  / </font>
+    <font face="Verdana, Arial, Helvetica, sans-serif" size="2"><i>Nama dan Alamat Pihak Diinsuranskan</i><br>
       <b><%= common.stringToHTMLString(NAME.toUpperCase()) %></b><br>
 <%	if (!ADDRESS_1.equals("")) { %>      <b><%= common.stringToHTMLString(ADDRESS_1.toUpperCase()) %></b><br>
 <%	}
@@ -249,99 +335,244 @@
 	if (!ADDRESS_4.equals("")) { %>      <b><%= common.stringToHTMLString(ADDRESS_4.toUpperCase()) %></b>
 <%	} %>
       </font></td>
-    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">e-Policy No.<br><i>No. e-Polisi</i></font></td>
+    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">e-Policy No.<br><i>No. e- Polisi</i></font></td>
     <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(dispCNCODE) %></b></font></td>
   </tr>
+<%	if (specialAgent.equals("Y")) { %>
   <tr>
-    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Agent Code & Name<br><i>Kod & Nama Ejen</i></font></td>
+    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Agent Code<br><i>Kod Ejen</i></font></td>
     <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(ACCODE) %></b></font></td>
   </tr>
+<%	} else { %>
   <tr>
-    <td bordercolor="#000000" width="60%" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Postcode / <i>Poskod</i> : <br><b><%= common.stringToHTMLString(POSTCODE) %></b></font></td>
+    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Agent Code & Name<br><i>Kod & Nama Ejen</i></font></td>
+    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(ACCODE) %> <%= common.stringToHTMLString(AGENCY_NAME) %></b></font></td>
+  </tr>
+<%	} %>
+  <tr>
+    <td rowspan="<%= grossPremium_rowSpan %>" bordercolor="#000000" width="60%" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Postcode / <i>Poskod </i>: <br><b><%= common.stringToHTMLString(POSTCODE) %></b></font></td>
     <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Gross Premium<br><i>Premium Kasar</i></font></td>
     <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(GPREM) %></b></font></td>
   </tr>
-<%	if (showRebate) { %>
+<%	if (!REBATEAMT.startsWith("0.00")) { %>
   <tr>
-    <td bordercolor="#000000" width="60%" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">&nbsp;</font></td>
-    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString2(REBATEPCT) %>% Rebate<br><i><%= common.stringToHTMLString2(REBATEPCT) %>% Rebat</i></font></td>
-    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(REBATEAMT) %></b></font></td>
+    <td bordercolor="#000000" width="20%" valign="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString2(REBATEPCT) %>% Rebate<br><i><%= common.stringToHTMLString2(REBATEPCT) %>% Rebat</i></font></td>
+    <td bordercolor="#000000" width="20%" valign="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(REBATEAMT) %></b></font></td>
+  </tr>
+<%	} %>
+<%	if (!GST_RT.equals("") && !GST_TRIGGER.equals("N")) { %>
+  <tr>
+    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString(GST_PCT) %>% GST<br><i><%= common.stringToHTMLString(GST_PCT) %>% Cukai Barangan dan Perkhidmatan</i></font></td>
+    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(GST_AMT) %></b></font></td>
+  </tr>
+<%	} else { %>
+  <tr>
+    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString(STAXPCT) %>% Service Tax<br><i><%= common.stringToHTMLString(STAXPCT) %>% Cukai Perkhidmatan</i></font></td>
+    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(STAXAMT) %></b></font></td>
   </tr>
 <%	} %>
   <tr>
     <td bordercolor="#000000" width="27%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business or Occupation<br><i>Perniagaan atau Pekerjaan</i> : <br><b><%= common.stringToHTMLString(OCCUPATION) %></b></font></td>
-    <td bordercolor="#000000" width="33%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business Reg. No. / New/Old NRIC No.<br><i>No. Pendaftaran Syarikat / No. KP Baru/Lama</i><br><b><%= common.stringToHTMLString(BUSINESS_NO) %></b></font></td>
-    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString(STAXPCT) %>% Service Tax<br><i><%= common.stringToHTMLString(STAXPCT) %>% Cukai Perkhidmatan</i></font></td>
-    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(STAXAMT) %></b></font></td>
-  </tr>
-  <tr>
-    <td bordercolor="#000000" rowspan="<%= (showStampFees ? 3 : 2) %>" colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / <i>Tempoh Insurans</i><br>
-      (a)&nbsp;From <b><%= common.stringToHTMLString(EFFDATE) %></b> to <b><%= common.stringToHTMLString(EXPDATE) %></b> (both dates inclusive)<br>
-      <i>&nbsp;&nbsp;&nbsp;Dari&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sehingga&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(termasuk kedua-dua tarikh)</i><br>
-      (b)&nbsp;Any subsequent period for which the Insured shall pay and the<br>&nbsp;&nbsp;&nbsp;Company shall agree to accept a renewal premium<br>
-      <i>&nbsp;&nbsp;&nbsp;Pada setiap tempoh yang berikutnya di mana Pihak Diinsuranskan<br>&nbsp;&nbsp;&nbsp;sepatutnya membuat bayaran dan Syarikat kemudiannya bersetuju menerima<br>&nbsp;&nbsp;&nbsp;premium pembaharuan</i></font></td>
+    <td bordercolor="#000000" width="33%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business Reg. No./ New/Old NRIC No. <br><i> No Pendaftaran Syarikat/ No KP Baru/Lama</i> <br><b><%= common.stringToHTMLString(BUSINESS_NO) %></b></font></td>
     <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Stamp Duty<br><i>Duti Setem</i></font></td>
     <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(STAMPDUTY) %></b></font></td>
   </tr>
+	<!-- STFee_FT_A5_DisplayStampFees --- Display Stamp Fees for PDF [StampFees_Flowchart_v1.0] -->
 <%	if (showStampFees) { %>
   <tr>
     <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Stamp Fees<br><i>Caj Setem</i></font></td>
     <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(STAMP_FEES) %></b></font></td>
   </tr>
 <%	} %>
+<%	if (bIssdate) { %>
   <tr>
+    <td bordercolor="#000000" rowspan="2" colspan="2" valign="top">
+    <font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / <i>Tempoh Insurans</i><br>
+	(a)&nbsp;From <b><%= ISS_CNTIME1 %>&nbsp;<%= common.stringToHTMLString(EFFDATE)+" " %></b> to <b><%= common.stringToHTMLString(EXPDATE) %></b> (both dates inclusive)<br>
+	<i>&nbsp;&nbsp;&nbsp;Dari&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sehingga&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(termasuk kedua-dua tarikh)</i><br>
+	(b)&nbsp;Any subsequent period for which the Insured shall pay and the<br>&nbsp;&nbsp;&nbsp;Company shall agree to accept a renewal premium<br>
+	<i>&nbsp;&nbsp;&nbsp;Pada  setiap tempoh yang berikutnya di mana Pihak Diinsuranskan<br>&nbsp;&nbsp;&nbsp;sepatutnya  membuat bayaran  dan Syarikat kemudiannya bersetuju menerima<br>&nbsp;&nbsp;&nbsp;premium pembaharuan</i>
+	</font></td>
     <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Total Payable<br><i>Jumlah Berbayar</i></font></td>
     <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(NETPREM) %></b></font></td>
   </tr>
   <tr>
-    <td bordercolor="#000000" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">FWCMS Reference No. / <i>No. Rujukan FWCMS</i> : <b><%= common.stringToHTMLString(FWCMSREFNO) %></b></font></td>
     <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Total Payable (OTC)<br><i>Jumlah Berbayar Di Kaunter</i></font></td>
-    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(NETPREM_OTC) %></b></font></td>
+    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%if((!NETPREM.equals("0.0000"))|(!NETPREM.equals("0.00"))){%><%= common.stringToHTMLString(common.fnFormatComma(common.roundTwoDecimal(common.fnCutComma(NETPREM)))) %><%}else{%><%= common.stringToHTMLString(NETPREM) %><%}%></b></font></td>
+  </tr>
+<%	} else { %>
+  <tr>
+    <td bordercolor="#000000" colspan="2" valign="top">
+    <font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / <i>Tempoh Insurans</i><br>
+	(a)&nbsp;From <b><%= ISS_CNTIME1 %>&nbsp;<%= common.stringToHTMLString(EFFDATE)+" " %></b> to <b><%= common.stringToHTMLString(EXPDATE) %></b> (both dates inclusive)<br>
+	<i>&nbsp;&nbsp;&nbsp;Dari&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sehingga&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(termasuk kedua-dua tarikh)</i><br>
+	(b)&nbsp;Any subsequent period for which the Insured shall pay and the<br>&nbsp;&nbsp;&nbsp;Company shall agree to accept a renewal premium<br>
+	<i>&nbsp;&nbsp;&nbsp;Pada  setiap tempoh yang berikutnya di mana Pihak Diinsuranskan<br>&nbsp;&nbsp;&nbsp;sepatutnya  membuat bayaran  dan Syarikat kemudiannya bersetuju menerima<br>&nbsp;&nbsp;&nbsp;premium pembaharuan</i>
+	</font></td>
+    <td bordercolor="#000000" width="20%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Total Payable<br><i>Jumlah Berbayar</i></font></td>
+    <td bordercolor="#000000" width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(NETPREM) %></b></font></td>
+  </tr>
+<%	} %>
+</table>
+
+<%-- ===== Description of insured person(s) - suppressed for a master
+     policy cover note (MASTERIND='Y'), as legacy ===== --%>
+<% if (MASTERIND.equals("Y")) { %>
+<% } else { %>
+<table width="100%" border="1" cellspacing="0" cellpadding="3">
+  <tr>
+    <td bordercolor="#000000" colspan="7" height="20" align="center" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">DESCRIPTION OF INSURED PERSON (S) / <i>DESKRIPSI PIHAK DIINSURANSKAN</i></font></td>
+  </tr>
+  <tr>
+    <td bordercolor="#000000" colspan="7" height="60" align="left" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">On the following employee(s) of the Insured for which the Insured is responsible:<br><i>Ke atas pekerja-pekerja yang Diinsuranskan yang telah dipertanggungjawabkan ke atas Pihak Diinsuranskan:</i></font></td>
   </tr>
 </table>
 
-<%-- ===== Description of insured person(s) ===== --%>
 <table width="100%" border="1" cellspacing="0" cellpadding="3">
   <tr>
-    <td bordercolor="#000000" colspan="7" height="20" align="center" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">DESCRIPTION OF INSURED PERSON(S) / <i>DESKRIPSI PIHAK DIINSURANSKAN</i></font></td>
-  </tr>
-  <tr>
-    <td bordercolor="#000000" colspan="7" height="40" align="left" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">On the following employee(s) of the Insured for which the Insured is responsible:<br><i>Ke atas pekerja-pekerja yang Diinsuranskan yang telah dipertanggungjawabkan ke atas Pihak Diinsuranskan:</i></font></td>
+    <td bordercolor="#FFFFFF" width="9%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">ID Card No.<br><i>No. Kad ID</i></font></td>
+    <td bordercolor="#FFFFFF" width="25%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Name Of Worker / Sex<br><i>Nama Pekerja / Jantina</i></font></td>
+    <td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Occp. Sector <br>Code/<i>Kod Sektor Pekerjaan</i></font></td>
+    <td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Date Of Birth<br><i>Tarikh Lahir</i></font></td>
+    <td bordercolor="#FFFFFF" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Passport No.<br><i>No. Passport</i></font></td>
+    <td bordercolor="#FFFFFF" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Country Of Origin<br><i>Negara Asal</i></font></td>
+    <td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Work Permit Expiry Date<br><i>Tarikh Tamat Tempoh Permit</i></font></td>
   </tr>
 </table>
 
 <table width="100%" border="1" cellspacing="0" cellpadding="3">
-  <tr>
-    <td bordercolor="#000000" width="9%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">No.<br><i>Bil.</i></font></td>
-    <td bordercolor="#000000" width="25%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Name Of Worker / Sex<br><i>Nama Pekerja / Jantina</i></font></td>
-    <td bordercolor="#000000" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Occp. Sector Code<br><i>Kod Sektor Pekerjaan</i></font></td>
-    <td bordercolor="#000000" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Date Of Birth<br><i>Tarikh Lahir</i></font></td>
-    <td bordercolor="#000000" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Passport No.<br><i>No. Passport</i></font></td>
-    <td bordercolor="#000000" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Country Of Origin<br><i>Negara Asal</i></font></td>
-    <td bordercolor="#000000" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Work Permit Expiry Date<br><i>Tarikh Tamat Tempoh Permit</i></font></td>
-  </tr>
 <%
 	for (int i = 0; i < vItem.size(); i++)
 	{
 		Hashtable htW			= (Hashtable) vItem.get(i);
 		String sEmp_Name		= common.setNullToString((String) htW.get("NAME"));
 		String sGender			= common.setNullToString((String) htW.get("GENDER"));
-		String sEmp_Passport	= common.setNullToString((String) htW.get("PASSPORT"));
-		String sNationality		= common.setNullToString((String) htW.get("NATIONALITY_DESCP"));
+		String sOccupDesc		= common.setNullToString((String) htW.get("OCCPSEC_DESCP"));
+		String sDob				= "";
+		String sPassport		= common.setNullToString((String) htW.get("PASSPORT"));
+		String sCountry			= common.setNullToString((String) htW.get("NATIONALITY_DESCP"));
 %>
   <tr>
-    <td bordercolor="#000000" width="9%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString2(df1.format(i + 1)) %></b></font></td>
-    <td bordercolor="#000000" width="25%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString2(sEmp_Name) %>&nbsp;(<%= common.stringToHTMLString2(sGender) %>)</b></font></td>
-    <td bordercolor="#000000" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">&nbsp;</font></td>
-    <td bordercolor="#000000" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">&nbsp;</font></td>
-    <td bordercolor="#000000" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(sEmp_Passport) %></b></font></td>
-    <td bordercolor="#000000" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(sNationality) %></b></font></td>
-    <td bordercolor="#000000" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">&nbsp;</font></td>
+    <td bordercolor="#FFFFFF" width="9%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString2(df1.format(i + 1)) %></b></font></td>
+    <td bordercolor="#FFFFFF" width="25%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString2(sEmp_Name) %>&nbsp;(<%= common.stringToHTMLString2(sGender) %>)</b></font></td>
+    <td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString2(sOccupDesc) %></b></font></td>
+    <td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(sDob) %></b></font></td>
+    <td bordercolor="#FFFFFF" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(sPassport) %></b></font></td>
+    <td bordercolor="#FFFFFF" width="15%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(sCountry) %></b></font></td>
+    <td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">&nbsp;</font></td>
   </tr>
 <%
 	}
 %>
 </table>
+<% } %>
+
+<%-- ===== Clauses / Warranties / Endorsements ===== --%>
+<table width="100%" border="1" cellspacing="0" cellpadding="3">
+	<tr>
+		<td bordercolor="#FFFFFF" width="100%" align="left" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Subject to the following Clauses / Warranties / Endorsements attached hereto: -<br><i>Tertakluk kepada Fasal / Waranti / Endorsemen berikut yang disertakan bersama ini: -</i></font></td>
+	</tr>
+	<tr>
+		<td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Code / <i>Kod</i></font></td>
+		<td bordercolor="#FFFFFF" width="88%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Description / <i>Deskripsi</i></font></td>
+	</tr>
+<%
+	if (CLAUSE_PRINT.equals("Y"))
+	{
+		for (int i = 0; i < vClause_Warr.size(); i++)
+		{
+			Hashtable htC	= (Hashtable) vClause_Warr.get(i);
+			String sCode	= common.setNullToString((String) htC.get("CODE"));
+			String sDescp	= common.setNullToString((String) htC.get("DESCP"));
+			if (sCode.equals("GST") && GST_TRIGGER.equals("N"))
+			{
+			}
+			else
+			{
+%>
+  <tr>
+		<td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(sCode) %></b></font></td>
+		<td bordercolor="#FFFFFF" width="88%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString2(sDescp) %></b></font></td>
+  </tr>
+<%
+			}
+		}
+	}
+%>
+<%	if (PRINCIPLE.equals("08") && !GST_TRIGGER.equals("N")) { %>
+	<tr>
+		<td bordercolor="#FFFFFF" width="12%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>GST</b></font></td>
+		<td bordercolor="#FFFFFF" width="88%" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>GOODS & SERVICES TAX (GST)</b></font></td>
+	</tr>
+<%	} %>
+<br><br><br>
+</table>
+
+<%-- ===== Issued-by / declaration block (pop_incl_f1 equivalent,
+     bilingual variant, rendered inline - the portal generator does not
+     emit the legacy footer include) ===== --%>
+<table tablefitpage="on" cellspacing="0" cellpadding="3" width="100%" border="1" wrap="off">
+	<tr>
+		<td width="30%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Replacing Cover Note No.<br><i>Gantian No. Nota Perlindungan</i></font></td>
+		<td width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>-</b></font></td>
+<%	if (specialAgent.equals("Y")) { %>
+		<td width="25%" valign="top" rowspan="5"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">&nbsp;</font></td>
+<%	} else { %>
+		<td width="25%" valign="top" rowspan="5"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Issued By / <i>Dikeluarkan Oleh</i><br><br><b><%= common.stringToHTMLString2(ISSUEDBY) %></b></font></td>
+<%	} %>
+		<td width="25%" valign="top" rowspan="5" align="left"><font face="Verdana, Arial, Helvetica, sans-serif" size="2" align="left">For /<i>untuk                                         <br><b>Liberty General Insurance Berhad</b></i><br><br><img src="../common/jpg/getjpg.jsp?fn=/Liberty_Auto_Signature.png"><br>_____________________________<br><b>Authorised Signature /<br><i>Tandatangan Yang Diberi Kuasa</i></b></font></td>
+	</tr>
+	<tr>
+		<td width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Master Policy No.<br><i>No. Polisi Induk</i></font></td>
+		<td width="20%" valign="bottom"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(MASTERPOL) %></b></font></td>
+	</tr>
+	<tr>
+		<td width="20%" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">FWCMS Reference No.<br><i>No. Rujukan FWCMS</i></font></td>
+		<td width="20%" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(FWCMSREFNO) %></b></font></td>
+	</tr>
+	<tr>
+		<td width="20%" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Date of Proposal or Declaration<br><i>Tarikh Cadangan  atau Pengisytiharan</i></font></td>
+		<td width="20%" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(PROPOSAL_DATE) %></b></font></td>
+	</tr>
+	<tr>
+		<td width="20%" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Date of Issue / Time<br><i>Tarikh Dikeluarkan / Waktu</i></font></td>
+		<td width="20%" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b><%= common.stringToHTMLString(ISSDATE) %> / <%= common.stringToHTMLString(ISSTIME) %></b></font></td>
+	</tr>
+</table>
+
+<%-- ===== Clause narrations (pop_incl_f3 equivalent) on their own
+     section - the generator renders each PAGEBREAK section with the
+     running schedule header ===== --%>
+<% if (CLAUSE_PRINT.equals("Y") && vNARRATION.size() > 0) { %>
+<PAGEBREAK></PAGEBREAK>
+<table width="100%" border="1" cellspacing="0" cellpadding="3" wrap="off">
+	<tr>
+		<th bordercolor="#FFFFFF" width="100%" align="left" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">The following endorsements, warranties, clauses or extensions are not applicable unless indicated in the Policy Schedule, in which case the endorsement(s), warranty(ies) , clause(s) or extension(s)  so indicated shall be deemed to form part of the policy<br><i>Endorsemen, waranti, fasal atau tambahan adalah tidak digunapakai kecuali dinyatakan di dalam Jadual Polisi, di mana endorsemen, waranti, fasal atau tambahan yang dinyata akan dianggap membentuk sebahagian daripada polisi</i></font></th>
+	</tr>
+	<tr>
+		<th bordercolor="#FFFFFF" width="12%" align="justify"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Code / <i>Kod</i></font></th>
+		<th bordercolor="#FFFFFF" width="88%" align="justify"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Description / <i>Deskripsi</i></font></th>
+	</tr>
+<%
+	for (int i = 0; i < vNARRATION.size(); i++)
+	{
+		Hashtable htN		= (Hashtable) vNARRATION.get(i);
+		String sCode		= common.setNullToString((String) htN.get("CODE"));
+		String sDescp		= common.setNullToString((String) htN.get("DESCP"));
+		String sNarration	= common.setNullToString((String) htN.get("NARRATION"));
+		if (!sCode.equals(""))
+		{
+%>
+	<tr>
+		<td bordercolor="#FFFFFF" width="12%" align="justify" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif"  size="2"><%= common.stringToHTMLString(sCode) %></font></td>
+		<td bordercolor="#FFFFFF" width="88%" align="justify" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif"  size="2"><%= common.stringToHTMLString2(sDescp) %><br><%= common.stringToHTMLString2(sNarration) %></font></td>
+	</tr>
+<%
+		}
+	}
+%>
+</table>
+<% } %>
 
 </body>
 </html>
