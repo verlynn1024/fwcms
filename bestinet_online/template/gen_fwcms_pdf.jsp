@@ -488,9 +488,11 @@
 		}
 		else
 		{
-			/* consolidated receipt: bare spacer header, blank footers */
+			/* consolidated receipt: bare spacer header, blank footers,
+			   LANDSCAPE so the full FWIG/FWHS product + payment columns
+			   fit across the page */
 			RP_html2pdf.generateHtml_custom_footer2(baseName + ".pdf", HTML,
-				"english","PORTRAIT",FWCMSOnline.buildHeaderHTML3(),"",
+				"english","LANDSCAPE",FWCMSOnline.buildHeaderHTML3(),"",
 				FWCMSOnline.buildFooterBlank(),FWCMSOnline.buildFooterBlank(),"40","90","50");
 			log(UUID, DOC, "render", "receipt rendered to " + mergedFile);
 		}
