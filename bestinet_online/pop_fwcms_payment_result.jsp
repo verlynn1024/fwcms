@@ -40,29 +40,40 @@ System.out.println(_sb.toString());
        state is read by the printing pipeline). */
     String FWCMS_UUID = common.setNullToString((String)session.getAttribute("SES_FWCMS_ONLINE_UUID"));
 
-    /* ── [MOCK] Payment result + issuance status — both modules deferred ──
-       Neither the payment gateway callback nor the Bestinet details-push
-       (issuance) exists yet, so the page mocks BOTH legs through the same
-       DAO methods the real integrations will use, keeping every printing
-       guard in template/gen_fwcms_pdf.jsp on real DB data (no bypass in
-       the entry point):
+    /* ── [MOCK] Payment leg only — issuance is now real ─────────────
+       Issuance (the Bestinet details-push) has landed: each product is
+       inserted into the existing FWCMS main tables via
+       FWCMSOnline.issueMainTables (see the block below), so the page no
+       longer mocks that leg. What remains mocked is the payment gateway
+       callback, which does not exist yet — so the page still stamps the
+       payment leg itself, through the same DAO method the real gateway
+       callback will use, keeping every printing guard in
+       template/gen_fwcms_pdf.jsp on real DB data (no bypass in the entry
+       point):
 
-         1. payment  — journey stamped PAID (updateFWCMSONLINETRANSPayment)
-         2. status   — every product row stamped ISSUED with a mock cover
-                       note / policy number and today's issue date
-                       (updateFWCMSONLINEDTLIssued, G4 + G6), then the
-                       journey closed TRANS_STATUS='S' / PURCHASE_STATUS=
-                       'ISSUED' (updateFWCMSONLINETRANSStatus)
+         1. payment  — [MOCK] journey stamped PAID with a MOCKPAY- ref
+                       (updateFWCMSONLINETRANSPayment); the real gateway
+                       callback will supply the true payment reference
+         2. issuance — [REAL] every product inserted into the FWCMS class
+                       tables via issueMainTables, generating the real
+                       cover note / policy number and stamping it back on
+                       the online DTL row; only if issuance throws (e.g. the
+                       CN series is not seeded here yet) does that product
+                       fall back to a mock MCK- stamp
+         3. status   — journey closed TRANS_STATUS='S' / PURCHASE_STATUS=
+                       'ISSUED' once every product is issued
+                       (updateFWCMSONLINETRANSStatus)
 
-       The guarantee letter renders entirely from the online-portal tables
+       The guarantee letter still renders from the online-portal tables
        (TB_FWCMS_ONLINE / _DTL / _WORKER — see FWCMSOnline.
-       getFWIGGLPrintDataOnline), so with these mock stamps the GL prints
-       end-to-end without any class-table row. PAYMENT=F still previews
-       the failed state without stamping anything.
-       [REMOVE when the payment + issuance modules land: restore
+       getFWIGGLPrintDataOnline); issuance now also lands the matching
+       class-table rows the other FWCMS documents read. PAYMENT=F still
+       previews the failed state without stamping anything.
+       [REMOVE when the payment gateway callback lands: restore
        isSuccess = "Y".equalsIgnoreCase(request.getParameter("PAYMENT"))
-       and let the gateway callback / details-push do the stamping. The
-       MCK- prefixes below make mock-stamped rows easy to find and purge.] */
+       and let the gateway callback supply the payment stamp. The MOCKPAY-
+       payment ref and any MCK- issuance fallbacks make mock-stamped rows
+       easy to find and purge.] */
     String paymentFlag = request.getParameter("PAYMENT");
     boolean isSuccess  = !"F".equalsIgnoreCase(paymentFlag);
 
