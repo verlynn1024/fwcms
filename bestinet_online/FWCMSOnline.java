@@ -1065,10 +1065,23 @@ public class FWCMSOnline extends DB_Contact{
 		/* CN header keys on UKEY (INSCODE+cover note); it carries the
 		   employer block AND the policy dates (ISSDATE/EFFDATE/EXPDATE) —
 		   the SCH table has neither of those columns (verified against
-		   inputXML.genFWIGCNXML and the TB_FWHSSCH describe). */
+		   inputXML.genFWIGCNXML and the TB_FWHSSCH describe).
+
+		   The occupation / business-registration columns are read too: the
+		   policy SCHEDULE (pop_fwcms_FWIG_SCH_print.jsp) prints "Business or
+		   Occupation" and "Business Reg. No. / NRIC" boxes that the Guarantee
+		   Letter never shows, so they are absent from getFWIGGLPrintDataOnline
+		   but needed here. */
+		String occupDescRaw	= "";
+		String occupCode	= "";
+		String tradeCode	= "";
+		String businessNo	= "";
+		String newIcNo		= "";
+		String oldIcNo		= "";
 		String myQuery = "SELECT NAME,ADDRESS_1,ADDRESS_2,ADDRESS_3,ADDRESS_4,"+
 						 "POSTCODE,STATE,POLNO,ACCODE,CLASS,PRINCIPLE,"+
-						 "ISSDATE,EFFDATE,EXPDATE "+
+						 "ISSDATE,EFFDATE,EXPDATE,"+
+						 "OCCUPATION_DESC,OCCUPATION_CODE,TRADE,BUSINESS_NO,NEW_IC_NO,OLD_IC_NO "+
 						 "FROM TB_FWIGCN WHERE UKEY=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
@@ -1089,20 +1102,58 @@ public class FWCMSOnline extends DB_Contact{
 			htFWIG.put("EXPDATE",	nz(rs.getString("EXPDATE")));
 			PRINCIPLE = nz(rs.getString("PRINCIPLE"));
 			htFWIG.put("PRINCIPLE",	PRINCIPLE);
+			occupDescRaw	= nz(rs.getString("OCCUPATION_DESC"));
+			occupCode		= nz(rs.getString("OCCUPATION_CODE"));
+			tradeCode		= nz(rs.getString("TRADE"));
+			businessNo		= nz(rs.getString("BUSINESS_NO"));
+			newIcNo			= nz(rs.getString("NEW_IC_NO"));
+			oldIcNo			= nz(rs.getString("OLD_IC_NO"));
 		}
 		rs.close();
 		pstmt.close();
 
+		/* Business/occupation display line (TB_NMOCCUPATION, MAINCLS='IG'):
+		   TRADE wins over OCCUPATION_CODE, both fall back to the free-text
+		   OCCUPATION_DESC — the same precedence the legacy schedule preview
+		   applies. Business Reg. No. falls back to the (new, else old) NRIC. */
+		String occupationDisplay = occupDescRaw;
+		if (!tradeCode.equals("")){
+			String d = resolveFWIGOccupation(PRINCIPLE, tradeCode);
+			occupationDisplay = d.equals("") ? tradeCode : d;
+		}
+		else if (!occupCode.equals("")){
+			String d = resolveFWIGOccupation(PRINCIPLE, occupCode);
+			if (!d.equals("")) occupationDisplay = d;
+			else if (occupationDisplay.equals("") || occupationDisplay.equals("-")) occupationDisplay = occupCode;
+		}
+		if (newIcNo.equals("")) newIcNo = oldIcNo;
+		String businessDisplay = businessNo.equals("") ? newIcNo : businessNo;
+		htFWIG.put("OCCUPATION_DISPLAY",	occupationDisplay);
+		htFWIG.put("BUSINESS_DISPLAY",		businessDisplay);
+
 		/* SCH keys on UKEY2 (not UKEY) — verified against
-		   inputXML (TB_FWIGSCH WHERE UKEY2=...). Only the sum insured /
-		   FWCMS reference come from here; dates were read from the CN. */
-		myQuery = "SELECT SUMINS,FWCMSREFNO FROM TB_FWIGSCH WHERE UKEY2=? WITH UR";
+		   inputXML (TB_FWIGSCH WHERE UKEY2=...). The sum insured / FWCMS
+		   reference feed both documents; the premium breakdown columns
+		   (gross, rebate, service tax, stamp duty, net) feed the SCHEDULE's
+		   premium box only — the Guarantee Letter has no premium section. */
+		myQuery = "SELECT SUMINS,FWCMSREFNO,GPREM,STAXAMT,STAXPCT,STAMPDUTY,"+
+				  "TOTPREM,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES "+
+				  "FROM TB_FWIGSCH WHERE UKEY2=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
 		rs = pstmt.executeQuery();
 		if (rs.next()){
 			htFWIG.put("SUMINS",		nz(rs.getString("SUMINS")));
 			htFWIG.put("FWCMSREFNO",	nz(rs.getString("FWCMSREFNO")));
+			htFWIG.put("GPREM",			nz(rs.getString("GPREM")));
+			htFWIG.put("STAXAMT",		nz(rs.getString("STAXAMT")));
+			htFWIG.put("STAXPCT",		nz(rs.getString("STAXPCT")));
+			htFWIG.put("STAMPDUTY",		nz(rs.getString("STAMPDUTY")));
+			htFWIG.put("TOTPREM",		nz(rs.getString("TOTPREM")));
+			htFWIG.put("NETPREM",		nz(rs.getString("NETPREM")));
+			htFWIG.put("REBATEPCT",		nz(rs.getString("REBATEPCT")));
+			htFWIG.put("REBATEAMT",		nz(rs.getString("REBATEAMT")));
+			htFWIG.put("STAMP_FEES",	nz(rs.getString("STAMP_FEES")));
 		}
 		rs.close();
 		pstmt.close();
@@ -1205,6 +1256,29 @@ public class FWCMSOnline extends DB_Contact{
 		htFWIG.put("SUMMARY", alSummary);
 
 		return htFWIG;
+	}
+
+	/* TB_NMOCCUPATION occupation-code → description lookup for the FWIG
+	   schedule's "Business or Occupation" box (MAINCLS='IG', as the legacy
+	   preview). Blank code / no match returns "" so the caller can fall back
+	   to the raw code or free-text description. Uses the open connection. */
+	private String resolveFWIGOccupation(String PRINCIPLE, String code) throws Exception{
+		if (code == null) code = "";
+		code = code.trim();
+		if (code.equals("")) return "";
+		String descp = "";
+		String q = "SELECT DESCP FROM TB_NMOCCUPATION WHERE CODE=? AND INSCODE=? "+
+				   "AND MAINCLS='IG' FETCH FIRST ROWS ONLY WITH UR";
+		PreparedStatement ps = myConn.prepareStatement(q);
+		ps.setString(1, code);
+		ps.setString(2, PRINCIPLE);
+		ResultSet r = ps.executeQuery();
+		if (r.next()){
+			descp = nz(r.getString("DESCP"));
+		}
+		r.close();
+		ps.close();
+		return descp;
 	}
 
 	/* TB_FWIGPREM nationality-code → description lookup (blank code / no
