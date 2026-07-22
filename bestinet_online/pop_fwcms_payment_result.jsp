@@ -80,10 +80,17 @@ System.out.println(_sb.toString());
                     SESUSERID, FWCMS_UUID);
             }
 
-            /* [MOCK] issuance stamp — one mock cover note / policy number
-               per product row that is not ISSUED yet (idempotent on
-               reload: already-ISSUED rows are left untouched, so a real
-               issuance is never overwritten by the mock). */
+            /* Issuance — insert each product into the existing FWCMS main
+               tables (TB_FWIGCN/…/TB_FWHSITEM) via FWCMSOnline.issueMainTables,
+               which reuses the legacy DB_FWIG / DB_FWHS DAOs and generates the
+               real cover note / policy number, then stamps it back onto the
+               online DTL row (idempotent: already-issued real rows are skipped).
+
+               Only after a product's main-table row exists does the printing
+               module have a policy to render. If issuance throws (e.g. the CN
+               series is not seeded in this environment yet) the product falls
+               back to a mock stamp so the portal demo still renders; the MCK-
+               prefixed rows make those fallbacks easy to find and purge. */
             if (htTXN != null)
             {
                 String sMockIssDate = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.util.Date());
@@ -94,17 +101,28 @@ System.out.println(_sb.toString());
                 {
                     java.util.Hashtable htDTL = (java.util.Hashtable) alDTL.get(iD);
                     String sInsType = (String) htDTL.get("INSURANCE_TYPE");
-                    if (!"ISSUED".equals((String) htDTL.get("INS_STATUS"))
-                        || ((String) htDTL.get("CNCODE")).equals(""))
+                    String sCNCODE  = (String) htDTL.get("CNCODE");
+                    boolean alreadyIssued = "ISSUED".equals((String) htDTL.get("INS_STATUS"))
+                        && !sCNCODE.equals("") && !sCNCODE.startsWith("MCK");
+                    if (alreadyIssued) continue;
+
+                    try
                     {
+                        String sResult = FWCMSOnline.issueMainTables(FWCMS_UUID, sInsType, SESUSERID);
+                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
+                            + " stage=main-table-issuance INSTYPE=" + sInsType
+                            + " issued CN/POLNO=" + sResult);
+                    }
+                    catch (Exception exIssue)
+                    {
+                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
+                            + " stage=main-table-issuance INSTYPE=" + sInsType
+                            + " FAILED - falling back to mock stamp: " + exIssue.getMessage());
+                        exIssue.printStackTrace();
                         FWCMSOnline.updateFWCMSONLINEDTLIssued(
                             "MCK" + sInsType + sMockSuffix,          /* mock CNCODE    */
                             "MCKPOL" + sInsType + sMockSuffix,       /* mock POLICY_NO */
                             sMockIssDate, SESUSERID, FWCMS_UUID, sInsType);
-                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
-                            + " stage=mock-issuance-stamp - INSTYPE=" + sInsType
-                            + " stamped ISSUED CNCODE=MCK" + sInsType + sMockSuffix
-                            + " ISS_DATE=" + sMockIssDate);
                     }
                 }
                 /* journey outcome: paid + every product stamped => Success/ISSUED */

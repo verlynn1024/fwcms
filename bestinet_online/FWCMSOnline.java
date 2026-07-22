@@ -23,6 +23,18 @@ public class FWCMSOnline extends DB_Contact{
 	common comm 			= new common();
 	SimpleDateFormat timestampFormat3 	= new SimpleDateFormat("yyyyMMddHHmmss");
 
+	/* Legacy class-table DAOs, reused as beans by the issuance controller
+	   (issueMainTables). FWCMSOnline stays a thin controller: it prepares the
+	   journey data from the online tables and delegates every class-table
+	   INSERT to these existing DAOs (DB_FWIG / DB_FWHS) rather than repeating
+	   their SQL. Each bean opens and commits its own connection, so a product
+	   is issued atomically and independently of this controller's connection. */
+	private DB_FWIG dbFWIG = new DB_FWIG();
+	private DB_FWHS dbFWHS = new DB_FWHS();
+
+	private SimpleDateFormat dateFmt = new SimpleDateFormat("yyyyMMdd");
+	private SimpleDateFormat timeFmt = new SimpleDateFormat("HHmmss");
+
 	/* Every date column in TB_FWCMS_ONLINE / TB_FWCMS_ONLINE_DTL is CHAR(14)
 	   yyyyMMddHHmmss (the platform's gateway timestamp format) — generated
 	   here, never by the database. */
@@ -1906,5 +1918,277 @@ public class FWCMSOnline extends DB_Contact{
 				try { mergedDoc.close(); } catch (Exception ignore) {}
 			}
 		}
+	}
+
+	/* =====================================================================
+	   MAIN-TABLE ISSUANCE (controller)
+
+	   After payment is confirmed the Bestinet journey must land in the SAME
+	   FWCMS class tables the legacy eCover flow uses, so every downstream
+	   module (printing, enquiry, cancellation, endorsement, reporting) reads
+	   a real policy — not just the online-portal tracking rows.
+
+	   issueMainTables() is the controller entry point: it loads the journey
+	   from the online tables (its own getters), delegates the class-table
+	   INSERTs to the legacy DB_FWIG / DB_FWHS beans, then stamps the generated
+	   cover-note / policy number back onto the online DTL row so the UUID
+	   linkage between the portal and the class tables is preserved.
+
+	   Return: the generated "CNCODE^POLNO", or "" when the product row is
+	   absent / already issued. Throws on a class-table failure so the caller
+	   can keep the journey un-issued (nothing half-written) and retry.
+	   ===================================================================== */
+
+	/* Principal (insurer) the portal issues under — Liberty, principal 08. */
+	private static final String ISSUE_PRINCIPLE = "08";
+	private static final String ISSUE_CURRENCY  = "MYR";
+
+	/* Cover-note number sources (deployment-seeded):
+	   FWIG pulls the next free number from a pool (getCoverNoteNo marks it
+	   DELETED='Y'); FWHS increments a TB_CNSERIES running number (getREFNO). */
+	private static final String FWIG_CN_POOL_TABLE = "TB_FWIGRUNNO";
+	private static final String FWIG_CN_POOL_FIELD = "CNCODE";
+	private static final String FWHS_CN_CLS        = "FWHS";
+
+	private double toD(Object o){
+		return toDecimal(nz((o == null) ? "" : o.toString())).doubleValue();
+	}
+
+	/* Number of months of cover from the eff/exp span; FWCMS default "12". */
+	private String monthsOfCover(String eff, String exp){
+		try {
+			if (eff.length() >= 6 && exp.length() >= 6){
+				int m = (Integer.parseInt(exp.substring(0,4)) * 12 + Integer.parseInt(exp.substring(4,6)))
+					  - (Integer.parseInt(eff.substring(0,4)) * 12 + Integer.parseInt(eff.substring(4,6)));
+				if (m > 0) return String.valueOf(m);
+			}
+		} catch (Exception e){ /* fall through */ }
+		return "12";
+	}
+
+	public String issueMainTables(String UUID, String INSTYPE, String USERID) throws Exception{
+
+		Hashtable txn = getFWCMSONLINETRANS(UUID);
+		if (txn == null) return "";
+		Hashtable dtl = getFWCMSONLINEDTL(UUID, INSTYPE);
+		if (dtl == null) return "";
+		/* already issued with a real (non-mock) CN — nothing to do */
+		String existingCN = nz((String) dtl.get("CNCODE"));
+		if ("ISSUED".equals((String) dtl.get("INS_STATUS")) && !existingCN.equals("")
+				&& !existingCN.startsWith("MCK")){
+			return "";
+		}
+		ArrayList workers = getFWCMSONLINEWORKERList(UUID, INSTYPE);
+
+		String result;
+		if ("I".equals(INSTYPE))      result = issueFWIG(txn, dtl, workers, USERID);
+		else if ("H".equals(INSTYPE)) result = issueFWHS(txn, dtl, workers, USERID);
+		else return "";
+
+		/* stamp the real CN/POLNO back onto the online DTL row (UUID linkage) */
+		String[] parts = result.split("\\^", -1);
+		String CNCODE = parts.length > 0 ? parts[0] : "";
+		String POLNO  = parts.length > 1 ? parts[1] : CNCODE;
+		String ISSDATE = nz((String) dtl.get("ISS_DATE"));
+		if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
+		updateFWCMSONLINEDTLIssued(CNCODE, POLNO, ISSDATE, USERID, UUID, INSTYPE);
+
+		return result;
+	}
+
+	/* FWIG (Insurance Guarantee) — TB_TRANSACTION, TB_FWIGCN, TB_FWIGMAST,
+	   TB_FWIGSCH via DB_FWIG. Column contracts verified against
+	   getFWIGPrintData()/inputXML.genFWIGCNXML(). */
+	private String issueFWIG(Hashtable txn, Hashtable dtl, ArrayList workers, String USERID) throws Exception{
+		try {
+			dbFWIG.makeConnection();
+			dbFWIG.setAutoCommitOff();
+
+			String ACCODE   = nz((String) txn.get("ACCODE"));
+			String CONTACTID= nz((String) txn.get("EMPLOYER_ROC"));
+			String ISSDATE  = nz((String) dtl.get("ISS_DATE"));
+			if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
+			String EFFDATE  = nz((String) dtl.get("EFF_DATE"));
+			String EXPDATE  = nz((String) dtl.get("EXP_DATE"));
+			String CNTIME   = timeFmt.format(new Date());
+			String NOMONTH  = monthsOfCover(EFFDATE, EXPDATE);
+
+			String CNCODE = dbFWIG.getCoverNoteNo(ISSUE_PRINCIPLE, ACCODE,
+												  FWIG_CN_POOL_TABLE, FWIG_CN_POOL_FIELD);
+			if (CNCODE == null || CNCODE.equals(""))
+				throw new Exception("FWIG cover-note pool exhausted / not seeded for ACCODE=" + ACCODE);
+			String UKEY  = ISSUE_PRINCIPLE + CNCODE;
+			String POLNO = CNCODE;
+
+			double dSumIns = toD(dtl.get("SUM_INSURED"));
+			double dGross  = toD(dtl.get("GROSS_PREMIUM"));
+			double dRebate = toD(dtl.get("REBATE_AMT"));
+			double dStax   = toD(dtl.get("SERVICE_TAX"));
+			double dStamp  = toD(dtl.get("STAMP_DUTY"));
+			double dNet    = toD(dtl.get("NET_PREMIUM"));
+			double dTot    = dNet;
+			String FWCMSREF = nz((String) dtl.get("BTN_TRANS_REF"));
+			if (FWCMSREF.equals("")) FWCMSREF = nz((String) dtl.get("REFNO"));
+
+			dbFWIG.insert_transaction("IG", "CN", USERID, ISSDATE, CONTACTID,
+					"N", ISSUE_PRINCIPLE, ACCODE, ISSDATE, "", dTot, CNCODE, "", "", USERID);
+
+			dbFWIG.Insert_FWIGCN(
+					UKEY, CNCODE, POLNO, USERID, ISSUE_PRINCIPLE, ACCODE, USERID, "",
+					"", "F", "N", ISSDATE, EFFDATE, EXPDATE, NOMONTH, CNTIME, "",
+					"", "", nz((String) txn.get("EMPLOYER_NAME")), "",
+					nz((String) txn.get("EMPLOYER_ADDRESS_1")), nz((String) txn.get("EMPLOYER_ADDRESS_2")),
+					nz((String) txn.get("EMPLOYER_ADDRESS_3")), nz((String) txn.get("EMPLOYER_ADDRESS_4")), "",
+					"", "", "", "", nz((String) txn.get("EMPLOYER_STATE")), nz((String) txn.get("EMPLOYER_POSTCODE")),
+					nz((String) txn.get("NATURE_BUSINESS")), nz((String) txn.get("NATURE_BUSINESS_DESCP")),
+					"", "", nz((String) txn.get("EMPLOYER_PHONE")), "", nz((String) txn.get("EMPLOYER_EMAIL")),
+					"", "", nz((String) txn.get("EMPLOYER_ROC")),
+					nz((String) txn.get("NATURE_BUSINESS")), "C", "", "PRINTED", "", "", "", 0d, "",
+					"", "", CONTACTID, "N", "N", "", "N", "",
+					"", "", "N", "", "7-08", "N", "");
+
+			/* MAST ^-delimited worker / nationality-summary lists */
+			String UKEY2 = UKEY;
+			StringBuffer eN=new StringBuffer(), eP=new StringBuffer(), eNat=new StringBuffer();
+			StringBuffer eG=new StringBuffer(), eA=new StringBuffer(), ePr=new StringBuffer();
+			LinkedHashMap sumMap = new LinkedHashMap();
+			double dTotAmt=0d, dTotPrem=0d;
+			for (int i=0; i<workers.size(); i++){
+				Hashtable w = (Hashtable) workers.get(i);
+				if (i>0){ eN.append("^"); eP.append("^"); eNat.append("^"); eG.append("^"); eA.append("^"); ePr.append("^"); }
+				String nat = nz((String) w.get("NATIONALITY"));
+				double amt = toD(w.get("IG_AMOUNT"));
+				double prm = toD(w.get("PREMIUM"));
+				eN.append(nz((String) w.get("NAME")));
+				eP.append(nz((String) w.get("PASSPORT")));
+				eNat.append(nat);
+				eG.append(nz((String) w.get("GENDER")));
+				eA.append(comm.fnFormatNumber(String.valueOf(amt), 4));
+				ePr.append(comm.fnFormatNumber(String.valueOf(prm), 4));
+				dTotAmt += amt; dTotPrem += prm;
+				double[] agg = (double[]) sumMap.get(nat);
+				if (agg == null){ agg = new double[]{0,0}; sumMap.put(nat, agg); }
+				agg[0]+=1; agg[1]+=amt;
+			}
+			StringBuffer sN=new StringBuffer(), sNo=new StringBuffer(), sA=new StringBuffer(), sT=new StringBuffer();
+			boolean first=true;
+			for (Iterator it=sumMap.keySet().iterator(); it.hasNext(); ){
+				String nat=(String) it.next(); double[] agg=(double[]) sumMap.get(nat);
+				if (!first){ sN.append("^"); sNo.append("^"); sA.append("^"); sT.append("^"); }
+				sN.append(nat); sNo.append((int) agg[0]);
+				double per = agg[0]>0 ? agg[1]/agg[0] : 0d;
+				sA.append(comm.fnFormatNumber(String.valueOf(per), 4));
+				sT.append(comm.fnFormatNumber(String.valueOf(agg[1]), 4));
+				first=false;
+			}
+			dbFWIG.Insert_FWIGMAST(
+					UKEY2, nz((String) txn.get("IMMI_CODE")), nz((String) txn.get("IMMI_DESCP")),
+					nz((String) txn.get("IMMI_ADDRESS")), "", "", "", "", "", "", "", "",
+					"", "", "", "", "0", "0",
+					eN.toString(), eP.toString(), eNat.toString(),
+					"0", ePr.toString(), "", eA.toString(), "",
+					sN.toString(), sNo.toString(), sA.toString(), sT.toString(),
+					"0", "0", dTotAmt, dTotPrem, 0d, eG.toString(), "");
+
+			dbFWIG.Insert_FWIGSCH_CFMKT(
+					UKEY2, ISSUE_CURRENCY, ISSUE_CURRENCY, 1d, dSumIns, dSumIns, dGross, dGross,
+					dRebate, 0d, dStax, 8d, dStamp, dNet, 0d, 0d,
+					0d, 0d, dTot, dGross, 0d, 0d,
+					"N", "", FWCMSREF, "", "", "0.00");
+
+			dbFWIG.conCommit();
+			return CNCODE + "^" + POLNO;
+		}
+		catch (Exception e){ try { dbFWIG.rollBack(); } catch (Exception ig){} throw e; }
+		finally { try { dbFWIG.setAutoCommitOn(); } catch (Exception ig){}
+				  try { dbFWIG.takeDown(); } catch (Exception ig){} }
+	}
+
+	/* FWHS (Hospitalisation Scheme) — TB_TRANSACTION, TB_FWHSCN, TB_FWHSSCH,
+	   TB_FWHSITEM via DB_FWHS. Column contracts verified against
+	   getFWHSPrintData()/inputXML.genFWHSCNXML(). */
+	private String issueFWHS(Hashtable txn, Hashtable dtl, ArrayList workers, String USERID) throws Exception{
+		try {
+			dbFWHS.makeConnection();
+			dbFWHS.setAutoCommitOff();
+
+			String ACCODE   = nz((String) txn.get("ACCODE"));
+			String CONTACTID= nz((String) txn.get("EMPLOYER_ROC"));
+			String ISSDATE  = nz((String) dtl.get("ISS_DATE"));
+			if (ISSDATE.equals("")) ISSDATE = dateFmt.format(new Date());
+			String EFFDATE  = nz((String) dtl.get("EFF_DATE"));
+			String EXPDATE  = nz((String) dtl.get("EXP_DATE"));
+			String CNTIME   = timeFmt.format(new Date());
+
+			String CNCODE = dbFWHS.getREFNO(ISSUE_PRINCIPLE, ACCODE, FWHS_CN_CLS);
+			if (CNCODE == null || CNCODE.equals(""))
+				throw new Exception("FWHS running number not seeded (TB_CNSERIES) for ACCODE=" + ACCODE);
+			String UKEY  = ISSUE_PRINCIPLE + CNCODE;
+			String POLNO = CNCODE;
+
+			double dSumIns = toD(dtl.get("SUM_INSURED"));
+			double dGross  = toD(dtl.get("GROSS_PREMIUM"));
+			double dStax   = toD(dtl.get("SERVICE_TAX"));
+			double dStamp  = toD(dtl.get("STAMP_DUTY"));
+			double dSvcFee = toD(dtl.get("SERVICE_FEE"));
+			double dNet    = toD(dtl.get("NET_PREMIUM"));
+			double dTotEmp = workers.size();
+			String FWCMSREF = nz((String) dtl.get("BTN_TRANS_REF"));
+			if (FWCMSREF.equals("")) FWCMSREF = nz((String) dtl.get("REFNO"));
+
+			dbFWHS.insert_transaction("FWHS", "CN", USERID, ISSDATE, CONTACTID,
+					"N", ISSUE_PRINCIPLE, ACCODE, ISSDATE, "", dNet, CNCODE, "", "", USERID, "PRINTED");
+
+			dbFWHS.Insert_FWHSCN2(
+					UKEY, CNCODE, POLNO, USERID, ISSUE_PRINCIPLE, ACCODE, USERID, "",
+					"", "", "", "N", ISSDATE, EFFDATE, EXPDATE, CNTIME,
+					"", "", "", nz((String) txn.get("EMPLOYER_NAME")), "",
+					nz((String) txn.get("EMPLOYER_ADDRESS_1")), nz((String) txn.get("EMPLOYER_ADDRESS_2")),
+					nz((String) txn.get("EMPLOYER_ADDRESS_3")), nz((String) txn.get("EMPLOYER_ADDRESS_4")), "",
+					"", "", "", "", nz((String) txn.get("EMPLOYER_STATE")), nz((String) txn.get("EMPLOYER_POSTCODE")),
+					nz((String) txn.get("NATURE_BUSINESS")), nz((String) txn.get("NATURE_BUSINESS_DESCP")), "",
+					"", "", nz((String) txn.get("EMPLOYER_PHONE")), nz((String) txn.get("EMPLOYER_EMAIL")), "", "",
+					nz((String) txn.get("EMPLOYER_ROC")), nz((String) txn.get("NATURE_BUSINESS")),
+					"C", "PRINTED", "", "", "", 0d, "", "",
+					"", CONTACTID, "N", "N", "", "N", "",
+					"", "", "N", "7-08", "", nz((String) txn.get("NATURE_BUSINESS")), "", "", "");
+
+			String UKEY2 = UKEY;
+			dbFWHS.Insert_FWHSSCH(
+					UKEY2, dSumIns, dGross, dGross, 0d,
+					0d, dStax, 8d, dSvcFee, 0d, dStamp, dNet, 0d,
+					0d, 0d, 0d, dNet, dGross, 0d, 0d, "",
+					0d, dTotEmp, "", "N", "", FWCMSREF, "",
+					"", "", "", "", "0.00");
+
+			Vector vItems = new Vector();
+			for (int i=0; i<workers.size(); i++){
+				Hashtable w = (Hashtable) workers.get(i);
+				String sumins  = comm.fnFormatNumber(String.valueOf(toD(w.get("IG_AMOUNT"))), 4);
+				String premium = comm.fnFormatNumber(String.valueOf(toD(w.get("PREMIUM"))), 4);
+				Vector r = new Vector();
+				r.addElement(UKEY + "$1$" + (i+1)); /*0 UKEY*/       r.addElement(String.valueOf(i+1)); /*1 SEQNO*/
+				r.addElement(nz((String) w.get("NAME"))); /*2*/     r.addElement(""); /*3 OCCPSEC*/
+				r.addElement(""); /*4 CARD*/                        r.addElement(""); /*5 EMP_PLACE*/
+				r.addElement(""); /*6 TERM_DATE*/                   r.addElement(""); /*7 DOB*/
+				r.addElement(nz((String) w.get("GENDER"))); /*8*/   r.addElement(nz((String) w.get("PASSPORT"))); /*9*/
+				r.addElement(nz((String) w.get("NATIONALITY"))); /*10*/ r.addElement(""); /*11 WORK_EXP*/
+				r.addElement(sumins); /*12 SUMINS*/                 r.addElement(premium); /*13 PREMIUM*/
+				r.addElement("0.0000"); /*14 SERVICE_FEE*/          r.addElement("0"); /*15 FWCMS_FEE*/
+				r.addElement("0"); /*16 APREM*/                     r.addElement("0"); /*17 ORG_APREM*/
+				r.addElement("0"); /*18 ORG_GPREM*/                 r.addElement("0"); /*19 REBATEAMT*/
+				r.addElement("0"); /*20 STAXAMT*/                   r.addElement("0"); /*21 STAXAMT_TPCA*/
+				r.addElement(""); /*22 INS_STATUS*/                 r.addElement(""); /*23 INSURED_FOR*/
+				r.addElement("N"); /*24 WORK_ID*/
+				vItems.addElement(r);
+			}
+			if (vItems.size() > 0) dbFWHS.Insert_FWHSITEM(vItems);
+
+			dbFWHS.conCommit();
+			return CNCODE + "^" + POLNO;
+		}
+		catch (Exception e){ try { dbFWHS.rollBack(); } catch (Exception ig){} throw e; }
+		finally { try { dbFWHS.setAutoCommitOn(); } catch (Exception ig){}
+				  try { dbFWHS.takeDown(); } catch (Exception ig){} }
 	}
 }

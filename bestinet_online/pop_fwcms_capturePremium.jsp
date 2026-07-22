@@ -213,6 +213,34 @@
                         staxAmt, stampFees, common.fnGetValue2(dTotalSvcFee), nettPrem,
                         "PREMIUM", SESUSERID, ONLINE_UUID, "H");
                 FWCMSOnline.updateFWCMSONLINETRANSTotal("PREMIUM", SESUSERID, ONLINE_UUID);
+
+                /* Snapshot the FWHS worker particulars into TB_FWCMS_ONLINE_WORKER
+                   (mirrors the FWIG block above) so that (1) the printing module
+                   reads the workers DB-first, and (2) issuance can populate
+                   TB_FWHSITEM from the database at payment time instead of from
+                   session. table_vTable_FWHS_ITM layout (check_fwcms_online.jsp):
+                   [2]=name [5]=gender [6]=passport [7]=nationality
+                   [9]=sum insured [10]=premium. Re-run safe: existing rows for
+                   this journey/type are cleared first. */
+                FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "H");
+                if (vFwhsWorkers != null) {
+                    int workerSeq = 0;
+                    for (int i = 0; i < vFwhsWorkers.size(); i++) {
+                        Vector vItem = (Vector) vFwhsWorkers.elementAt(i);
+                        if (vItem == null || vItem.size() <= 10) continue;
+                        workerSeq++;
+                        FWCMSOnline.insertFWCMSONLINEWORKER(
+                                ONLINE_UUID, "H", workerSeq,
+                                common.setNullToString((String) vItem.elementAt(2)),   // name
+                                common.setNullToString((String) vItem.elementAt(6)),   // passport
+                                common.setNullToString((String) vItem.elementAt(7)),   // nationality code
+                                "",                                                    // nationality descp (resolved at print)
+                                common.setNullToString((String) vItem.elementAt(5)),   // gender
+                                common.setNullToString((String) vItem.elementAt(9)),   // sum insured
+                                common.setNullToString((String) vItem.elementAt(10)),  // premium
+                                SESUSERID);
+                    }
+                }
             } catch (Exception e) {
                 e.printStackTrace();
                 FWCMSOnline.rollBack();
