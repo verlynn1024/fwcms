@@ -51,6 +51,21 @@ public class FWCMSOnline extends DB_Contact{
 		return new java.math.BigDecimal(sValue);
 	}
 
+	/* Clamp a value to its VARCHAR/CHAR column width before binding. The
+	   Bestinet enquiry response and the FWCMS code lookups can hand back a
+	   value wider than the target column (a full-word gender, a spelled-out
+	   nationality, an unusually long name/passport), which DB2 rejects with
+	   SQLCODE -302 / SQLSTATE 22001 (character right-truncation). Because the
+	   worker snapshot is written one row at a time inside a single
+	   transaction, one over-width worker aborts the whole snapshot and leaves
+	   TB_FWCMS_ONLINE_WORKER empty — which then starves TB_FWHSITEM at
+	   issuance. Fitting each value to its width keeps the snapshot intact
+	   (the column widths mirror what the print/issuance reads expect). */
+	private String fit(String sValue,int maxLen){
+		if(sValue == null) return "";
+		return sValue.length() > maxLen ? sValue.substring(0,maxLen) : sValue;
+	}
+
 	/* =====================================================================
 	   Parent — TB_FWCMS_ONLINE: one row per portal purchase journey,
 	   keyed by UUID. Portal-level data only; the per-product enquiry data
@@ -705,32 +720,35 @@ public class FWCMSOnline extends DB_Contact{
 			                 "CREATED_BY,CREATED_DATE)"+
 			                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
 
+			/* Widths mirror TB_FWCMS_ONLINE_WORKER: NAME(120) PASSPORT(30)
+			   NATIONALITY(10) NATIONALITY_DESCP(100) GENDER(2) CREATED_BY(20).
+			   fit() guards against SQLCODE -302 / SQLSTATE 22001. */
 			pstmt = myConn.prepareStatement(myQuery);
-			pstmt.setString(1,UUID);
-			pstmt.setString(2,INSTYPE);
+			pstmt.setString(1,fit(UUID,36));
+			pstmt.setString(2,fit(INSTYPE,10));
 			pstmt.setInt(3,WORKERSEQ);
-			pstmt.setString(4,NAME);
-			pstmt.setString(5,PASSPORT);
-			pstmt.setString(6,NATIONALITY);
-			pstmt.setString(7,NATIONALITYDESCP);
-			pstmt.setString(8,GENDER);
+			pstmt.setString(4,fit(NAME,120));
+			pstmt.setString(5,fit(PASSPORT,30));
+			pstmt.setString(6,fit(NATIONALITY,10));
+			pstmt.setString(7,fit(NATIONALITYDESCP,100));
+			pstmt.setString(8,fit(GENDER,2));
 			pstmt.setBigDecimal(9,toDecimal(IGAMOUNT));
 			pstmt.setBigDecimal(10,toDecimal(PREMIUM));
-			pstmt.setString(11,CREATEDBY);
+			pstmt.setString(11,fit(CREATEDBY,20));
 			pstmt.setString(12,NOW);
 			RowsAffected = pstmt.executeUpdate();
 			pstmt.close();
 
 			if (RowsAffected > 0){
 				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-				pstmt2.setString(1,UUID);
-				pstmt2.setString(2,INSTYPE);
+				pstmt2.setString(1,fit(UUID,36));
+				pstmt2.setString(2,fit(INSTYPE,10));
 				pstmt2.setString(3,String.valueOf(WORKERSEQ));
-				pstmt2.setString(4,NAME);
-				pstmt2.setString(5,PASSPORT);
-				pstmt2.setString(6,NATIONALITY);
-				pstmt2.setString(7,NATIONALITYDESCP);
-				pstmt2.setString(8,GENDER);
+				pstmt2.setString(4,fit(NAME,120));
+				pstmt2.setString(5,fit(PASSPORT,30));
+				pstmt2.setString(6,fit(NATIONALITY,10));
+				pstmt2.setString(7,fit(NATIONALITYDESCP,100));
+				pstmt2.setString(8,fit(GENDER,2));
 				pstmt2.setString(9,toDecimal(IGAMOUNT).toPlainString());
 				pstmt2.setString(10,toDecimal(PREMIUM).toPlainString());
 				pstmt2.setString(11,CREATEDBY);
