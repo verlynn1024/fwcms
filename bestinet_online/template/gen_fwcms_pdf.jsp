@@ -564,10 +564,78 @@
 			   policy sold to the employer. The policy schedules (FWIG_SCH /
 			   FWHS_SCH) keep it. */
 			boolean includeImportantNotice = !DOC.equals("FWIG_GL");
+
+			/* Important Notice: like the Privacy Clause, it is not a static
+			   PDF in the legacy EASC app - it is the JSP include pop_incl_f2.jsp
+			   (FWIG_SCH check_ind="Y", FWHS_SCH check_ind="H", identical FMOS/
+			   BNMLINK/PIDM notice). Loop back to pop_fwcms_important_notice_
+			   print.jsp, rasterise it with the Liberty letterhead, and hand the
+			   rendered PDF to mergeAppendix for the Important Notice slot. There
+			   is NO static fallback (Important_Notice.pdf is retired), so a
+			   render failure here is fatal - the outer catch shows the friendly
+			   error page and the policy is never streamed without its notice. */
+			String importantNoticePdf = "";
+			if (includeImportantNotice)
+			{
+				try
+				{
+					String inData  = URLEncoder.encode("TYPE") + "=" + URLEncoder.encode("GRAB");
+					inData += "&" + URLEncoder.encode("UUID") + "=" + URLEncoder.encode(UUID);
+
+					String inURL = server_root + request.getContextPath()
+						+ "/bestinet_online/template/pop_fwcms_important_notice_print.jsp?option=print";
+					log(UUID, DOC, "appendix", "Important Notice loopback POST to " + inURL + " body=[" + inData + "]");
+
+					URL urlIN = new URL(inURL);
+					URLConnection connIN = urlIN.openConnection();
+					connIN.setDoOutput(true);
+					OutputStreamWriter wrIN = new OutputStreamWriter(connIN.getOutputStream());
+					wrIN.write(inData);
+					wrIN.flush();
+
+					BufferedReader rdIN = new BufferedReader(new InputStreamReader(connIN.getInputStream()));
+					StringBuffer inResults = new StringBuffer();
+					String inLine;
+					while ((inLine = rdIN.readLine()) != null)
+					{
+						inResults.append(inLine);
+					}
+					wrIN.close();
+					rdIN.close();
+
+					String inHTML = FWCMSOnline.normaliseFontSizes(inResults.toString());
+					String inLower = inHTML.toLowerCase();
+					boolean inLooksLikeError = inLower.indexOf("document reference is missing") != -1
+						|| inLower.indexOf("login") != -1 || inLower.indexOf("logout") != -1;
+					log(UUID, DOC, "appendix", "Important Notice loopback htmlLength=" + inHTML.length()
+						+ " looksLikeErrorOrRedirect=" + inLooksLikeError);
+					if (inLooksLikeError || inHTML.trim().equals(""))
+					{
+						throw new Exception("Important Notice loopback returned an error/redirect or empty body");
+					}
+
+					/* letterhead header + blank footers, matching the privacy
+					   clause's first-page treatment (logo_height=80) */
+					RP_html2pdf.generateHtml_custom_footer2(baseName + "-IN.pdf", inHTML,
+						"english","PORTRAIT",FWCMSOnline.buildHeaderHTML3(),"",
+						FWCMSOnline.buildFooterBlank(),FWCMSOnline.buildFooterBlank(),"80","60","30");
+					importantNoticePdf = TEMP_PATH + "/" + baseName + "-IN.pdf";
+					log(UUID, DOC, "appendix", "Important Notice rendered from JSP to " + importantNoticePdf);
+				}
+				catch (Exception inEx)
+				{
+					/* fatal by requirement: no static fallback for the notice */
+					log(UUID, DOC, "appendix", "Important Notice JSP render FAILED (" + inEx
+						+ "); no static fallback - failing the document");
+					throw new Exception("Important Notice render failed", inEx);
+				}
+			}
+
 			log(UUID, DOC, "appendix", "merging mandatory appendix (CUT_OFF=" + CUT_OFF
 				+ ", importantNotice=" + includeImportantNotice + ") into " + mergedFile
-				+ " privacyClausePdf=[" + privacyClausePdf + "]");
-			FWCMSOnline.mergeAppendix(mergedFile, temp_banner_path, CUT_OFF, privacyClausePdf, includeImportantNotice);
+				+ " privacyClausePdf=[" + privacyClausePdf + "] importantNoticePdf=[" + importantNoticePdf + "]");
+			FWCMSOnline.mergeAppendix(mergedFile, temp_banner_path, CUT_OFF, privacyClausePdf,
+				importantNoticePdf, includeImportantNotice);
 			log(UUID, DOC, "appendix", "appendix merge done");
 		}
 	}
