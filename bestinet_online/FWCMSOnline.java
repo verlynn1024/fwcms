@@ -1970,6 +1970,12 @@ public class FWCMSOnline extends DB_Contact{
 	private static final String FWIG_CN_POOL_FIELD = "NMNO";
 	private static final String FWHS_CN_CLS        = "FWHS";
 
+	/* DEV ONLY: when the FWIG cover-note pool has no free number for the
+	   ACCODE, generate a unique throwaway CN (IGT + timestamp) instead of
+	   failing the issuance. Every run gets a fresh CN so UKEY stays unique.
+	   MUST be false in production — real deployments seed the pool. */
+	private static final boolean FWIG_DEV_CN_FALLBACK = true;
+
 	private double toD(Object o){
 		return toDecimal(nz((o == null) ? "" : o.toString())).doubleValue();
 	}
@@ -2051,8 +2057,13 @@ public class FWCMSOnline extends DB_Contact{
 
 			String CNCODE = dbFWIG.getCoverNoteNo(ISSUE_PRINCIPLE, ACCODE,
 												  FWIG_CN_POOL_TABLE, FWIG_CN_POOL_FIELD);
-			if (CNCODE == null || CNCODE.equals(""))
-				throw new Exception("FWIG cover-note pool exhausted / not seeded for ACCODE=" + ACCODE);
+			if (CNCODE == null || CNCODE.equals("")){
+				if (!FWIG_DEV_CN_FALLBACK)
+					throw new Exception("FWIG cover-note pool exhausted / not seeded for ACCODE=" + ACCODE);
+				CNCODE = "IGT" + (System.currentTimeMillis() % 10000000000L);
+				System.out.println("[FWCMSISSUE] FWIG pool empty for ACCODE=" + ACCODE
+					+ " - DEV fallback CN " + CNCODE);
+			}
 			String UKEY  = ISSUE_PRINCIPLE + CNCODE;
 			String POLNO = CNCODE;
 

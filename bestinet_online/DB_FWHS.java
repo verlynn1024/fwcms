@@ -615,11 +615,20 @@ public class DB_FWHS extends EASCManager
 	{ 
 		setAutoCommitOff(); 
 
+		/* ENDORSE_NO comes from the CN suffix after "-", but an ACCODE that
+		   itself contains "-" (e.g. W71000-00, giving CNCODE W71000-00-1)
+		   must not leak into it: strip the ACCODE prefix before looking
+		   for the endorsement suffix. */
 		String END_NO = "";
-		if(CNCODE.indexOf("-")>-1)
+		String CN_TAIL = CNCODE;
+		if(ACCODE.length() > 0 && CNCODE.startsWith(ACCODE + "-"))
 		{
-			int pos = CNCODE.indexOf("-") + 1;
-			END_NO 	= CNCODE.substring(pos);
+			CN_TAIL = CNCODE.substring(ACCODE.length() + 1);
+		}
+		if(CN_TAIL.indexOf("-")>-1)
+		{
+			int pos = CN_TAIL.indexOf("-") + 1;
+			END_NO 	= CN_TAIL.substring(pos);
 		}
 						
 		String myQuery	= "INSERT INTO TB_FWHSCN(UKEY,CNCODE,POLNO,USERID,PRINCIPLE,ACCODE,BRUSER_ID,BR_ID,PREVPOL,MASTERIND," + 
