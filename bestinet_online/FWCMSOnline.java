@@ -727,6 +727,26 @@ public class FWCMSOnline extends DB_Contact{
 								throws Exception{
 
 			String NOW = now();
+
+			/* The worker vectors are fed from the Bestinet enquiry, whose
+			   values are display-oriented and can overflow the snapshot column
+			   widths — DB2 aborts such an INSERT with SQLCODE -302 (SQLSTATE
+			   22001, host variable out of range), which used to sink the whole
+			   payment leg. Normalise every field to its column definition
+			   (see the TB_FWCMS_ONLINE_WORKER describe) before binding:
+			   NATIONALITY in particular arrives as "<code> <description>"
+			   (check_fwcms_online.jsp rewrites it to NATIONALITY||' '||DESCP),
+			   but the column is a 10-char code and resolveFWIGNationality keys
+			   on the bare code, so keep only the leading code. */
+			UUID              = fit(UUID, 36);
+			INSTYPE           = fit(INSTYPE, 10);
+			NAME              = fit(NAME, 120);
+			PASSPORT          = fit(PASSPORT, 30);
+			NATIONALITY       = fit(natCode(NATIONALITY), 10);
+			NATIONALITYDESCP  = fit(NATIONALITYDESCP, 100);
+			GENDER            = fit(GENDER, 2);
+			CREATEDBY         = fit(CREATEDBY, 20);
+
 			String myQuery = "INSERT INTO TB_FWCMS_ONLINE_WORKER (UUID,INSURANCE_TYPE,WORKER_SEQ,"+
 			                 "NAME,PASSPORT,NATIONALITY,NATIONALITY_DESCP,GENDER,IG_AMOUNT,PREMIUM,"+
 			                 "CREATED_BY,CREATED_DATE)"+
@@ -766,6 +786,25 @@ public class FWCMSOnline extends DB_Contact{
 			}
 
 			return RowsAffected;
+	}
+
+	/* Clamp a character value to its DB2 column width so an oversized host
+	   variable can never raise SQLCODE -302 on INSERT/UPDATE. Null passes
+	   through untouched (bound as SQL NULL). */
+	private String fit(String s,int max){
+		if (s == null) return null;
+		return (s.length() > max) ? s.substring(0,max) : s;
+	}
+
+	/* NATIONALITY is stored as a bare code (VARCHAR 10); the enquiry vector
+	   may deliver "<code> <description>" (e.g. "MMR MYANMAR"). Keep only the
+	   leading code so the value fits and resolveFWIGNationality / the print
+	   summary — which key on the code — resolve correctly. */
+	private String natCode(String s){
+		if (s == null) return null;
+		s = s.trim();
+		int sp = s.indexOf(' ');
+		return (sp > 0) ? s.substring(0,sp) : s;
 	}
 
 	/* =====================================================================
