@@ -2010,16 +2010,24 @@ public class FWCMSOnline extends DB_Contact{
 		   B.EFFDATE/B.EXPDATE from TB_FWHSCN B). The occupation / business-
 		   registration columns feed the schedule's "Business or Occupation"
 		   and "Business Reg. No. / NRIC" boxes (absent from the online GL
-		   model, so read here). */
+		   model, so read here). CNCODE / CNTIME / PREVPOL / PROPOSAL_DATE /
+		   MASTERPOL / MASTERIND / REPLACECN feed the schedule's policy box,
+		   period-of-insurance time and issued-by / declaration block —
+		   read field-for-field like the legacy pop_cn_fwhs_preview.jsp. */
 		String occupDescRaw		= "";
 		String occupCode		= "";
 		String natureBusiness	= "";
 		String businessNo		= "";
 		String newIcNo			= "";
 		String oldIcNo			= "";
+		String ACCODE			= "";
+		String USERID			= "";
+		String PREVPOL			= "";
+		String REPLACECN		= "";
 		String myQuery = "SELECT NAME,ADDRESS_1,ADDRESS_2,ADDRESS_3,ADDRESS_4,"+
-						 "POSTCODE,STATE,POLNO,ACCODE,CLASS,PRINCIPLE,"+
-						 "ISSDATE,EFFDATE,EXPDATE,"+
+						 "POSTCODE,STATE,POLNO,ACCODE,CLASS,PRINCIPLE,CNCODE,USERID,"+
+						 "ISSDATE,EFFDATE,EXPDATE,CNTIME,PREVPOL,PROPOSAL_DATE,"+
+						 "MASTERPOL,MASTERIND,REPLACECN,"+
 						 "OCCUPATION_DESC,OCCUPATION_CODE,NATURE_BUSINESS,BUSINESS_NO,NEW_IC_NO,OLD_IC_NO "+
 						 "FROM TB_FWHSCN WHERE UKEY=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
@@ -2034,13 +2042,23 @@ public class FWCMSOnline extends DB_Contact{
 			htFWHS.put("POSTCODE",	nz(rs.getString("POSTCODE")));
 			htFWHS.put("STATE",		nz(rs.getString("STATE")));
 			htFWHS.put("POLNO",		nz(rs.getString("POLNO")));
-			htFWHS.put("ACCODE",	nz(rs.getString("ACCODE")));
 			htFWHS.put("CLASS",		nz(rs.getString("CLASS")));
+			htFWHS.put("CNCODE",	nz(rs.getString("CNCODE")));
 			PRINCIPLE = nz(rs.getString("PRINCIPLE"));
 			htFWHS.put("PRINCIPLE",	PRINCIPLE);
+			ACCODE = nz(rs.getString("ACCODE"));
+			htFWHS.put("ACCODE",	ACCODE);
+			USERID = nz(rs.getString("USERID"));
+			htFWHS.put("USERID",	USERID);
 			htFWHS.put("ISSDATE",	nz(rs.getString("ISSDATE")));
 			htFWHS.put("EFFDATE",	nz(rs.getString("EFFDATE")));
 			htFWHS.put("EXPDATE",	nz(rs.getString("EXPDATE")));
+			htFWHS.put("ISSTIME",	nz(rs.getString("CNTIME")));
+			PREVPOL = nz(rs.getString("PREVPOL"));
+			htFWHS.put("PROPOSAL_DATE",	nz(rs.getString("PROPOSAL_DATE")));
+			htFWHS.put("MASTERPOL",	nz(rs.getString("MASTERPOL")));
+			htFWHS.put("MASTERIND",	nz(rs.getString("MASTERIND")));
+			REPLACECN = nz(rs.getString("REPLACECN"));
 			occupDescRaw	= nz(rs.getString("OCCUPATION_DESC"));
 			occupCode		= nz(rs.getString("OCCUPATION_CODE"));
 			natureBusiness	= nz(rs.getString("NATURE_BUSINESS"));
@@ -2050,6 +2068,87 @@ public class FWCMSOnline extends DB_Contact{
 		}
 		rs.close();
 		pstmt.close();
+
+		/* Previous Policy No. falls back to the replaced cover note, exactly
+		   as the legacy preview (PREVPOL else REPLACECN). */
+		if (PREVPOL.equals("")) PREVPOL = REPLACECN;
+		htFWHS.put("PREVPOL", PREVPOL);
+
+		/* Agent flags (TB_AGENT_AM): FWIG_SIGN drives the schedule's
+		   "Agent Code" vs "Agent Code & Name" box, INTERMEDIARY_IND the
+		   intermediary tax invoice — as the legacy preview reads them. */
+		myQuery = "SELECT FWIG_SIGN,INTERMEDIARY_IND FROM TB_AGENT_AM WHERE ACCODE=? WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, ACCODE);
+		rs = pstmt.executeQuery();
+		if (rs.next()){
+			htFWHS.put("SPECIAL_AGENT",		nz(rs.getString("FWIG_SIGN")));
+			htFWHS.put("INTERMEDIARY_IND",	nz(rs.getString("INTERMEDIARY_IND")));
+		}
+		rs.close();
+		pstmt.close();
+		if (htFWHS.get("SPECIAL_AGENT") == null)	htFWHS.put("SPECIAL_AGENT", "");
+		if (htFWHS.get("INTERMEDIARY_IND") == null)	htFWHS.put("INTERMEDIARY_IND", "");
+
+		/* Issued-by block: agent user resolved via TB_ACNO_AM -> TB_USER_AM,
+		   with the exact ACCODEID derivation the legacy schedule preview
+		   applies, then composed into the same <br>-separated ISSUEDBY string
+		   the pop_incl_f1 footer prints. */
+		String ACCODEID = "";
+		if (comm.getKey(ACCODE,"-").length() < 6){
+			if (ACCODE.length() >= 3 && (ACCODE.substring(ACCODE.length()-3, ACCODE.length())).equalsIgnoreCase("-NM")){
+				ACCODEID = ACCODE.substring(0, ACCODE.length()-3);
+			}else{
+				ACCODEID = ACCODE;
+			}
+		}
+		else{
+			ACCODEID = comm.getKey(ACCODE,"-")+"-00";
+		}
+
+		String ID = "";
+		myQuery = "SELECT USERID FROM TB_ACNO_AM WHERE ACCODE=? FETCH FIRST ROW ONLY WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, ACCODEID);
+		rs = pstmt.executeQuery();
+		if (rs.next()){
+			ID = nz(rs.getString("USERID"));
+		}
+		rs.close();
+		pstmt.close();
+
+		String ACUSERID = ID.equals("") ? USERID : comm.getKey(ID,"-");
+
+		String AGENCY_NAME			= "";
+		String USER_ADDRESS_1		= "";
+		String USER_ADDRESS_2		= "";
+		String USER_ADDRESS_3		= "";
+		String USER_ADDRESS_4		= "";
+		String USER_TEL_NO_OFFICE	= "";
+		String USER_FAX_NO_OFFICE	= "";
+		String USER_NAME			= "";
+		myQuery = "SELECT AGENCY_NAME,USER_ADDRESS_1,USER_ADDRESS_2,USER_ADDRESS_3,"+
+				  "USER_ADDRESS_4,TEL_NO_OFFICE,FAX_NO_OFFICE,USER_NAME "+
+				  "FROM TB_USER_AM WHERE USERID=? WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, ACUSERID);
+		rs = pstmt.executeQuery();
+		if (rs.next()){
+			AGENCY_NAME			= nz(rs.getString("AGENCY_NAME"));
+			USER_ADDRESS_1		= nz(rs.getString("USER_ADDRESS_1"));
+			USER_ADDRESS_2		= nz(rs.getString("USER_ADDRESS_2"));
+			USER_ADDRESS_3		= nz(rs.getString("USER_ADDRESS_3"));
+			USER_ADDRESS_4		= nz(rs.getString("USER_ADDRESS_4"));
+			USER_TEL_NO_OFFICE	= nz(rs.getString("TEL_NO_OFFICE"));
+			USER_FAX_NO_OFFICE	= nz(rs.getString("FAX_NO_OFFICE"));
+			USER_NAME			= nz(rs.getString("USER_NAME"));
+		}
+		rs.close();
+		pstmt.close();
+		htFWHS.put("AGENCY_NAME", AGENCY_NAME);
+		htFWHS.put("ISSUEDBY", USER_NAME+"<br>"+AGENCY_NAME+"<br>"+USER_ADDRESS_1+"<br>"+USER_ADDRESS_2
+			+"<br>"+USER_ADDRESS_3+"<br>"+USER_ADDRESS_4
+			+"<br> Tel : "+USER_TEL_NO_OFFICE+"<br> Fax : "+USER_FAX_NO_OFFICE);
 
 		/* Business/occupation display line: NATURE_BUSINESS resolved via
 		   TB_NMOCCUPATION (MAINCLS='IG') overrides the raw OCCUPATION_CODE,
@@ -2071,9 +2170,11 @@ public class FWCMSOnline extends DB_Contact{
 		   service charge/levy, stamp duty, stamp fees, net) the schedule's
 		   premium box prints. SERVICE_FEE + FWCMS_FEE combine into the TPCA /
 		   Service Fee line, LEVYAMT is the service charge on it — as the
-		   legacy preview computes. */
+		   legacy preview computes. POL_CLAUSE feeds the Clauses / Warranties
+		   listing and the clause narrations. */
+		String polClause = "";
 		myQuery = "SELECT SUMINS,FWCMSREFNO,GPREM,STAXPCT,STAXAMT,SERVICE_FEE,"+
-				  "FWCMS_FEE,LEVYAMT,STAMPDUTY,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES "+
+				  "FWCMS_FEE,LEVYAMT,STAMPDUTY,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES,POL_CLAUSE "+
 				  "FROM TB_FWHSSCH WHERE UKEY2=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
@@ -2092,9 +2193,118 @@ public class FWCMSOnline extends DB_Contact{
 			htFWHS.put("REBATEPCT",		nz(rs.getString("REBATEPCT")));
 			htFWHS.put("REBATEAMT",		nz(rs.getString("REBATEAMT")));
 			htFWHS.put("STAMP_FEES",	nz(rs.getString("STAMP_FEES")));
+			polClause = nz(rs.getString("POL_CLAUSE"));
 		}
 		rs.close();
 		pstmt.close();
+
+		/* GST record (TB_GST_CN, keyed by PRINCIPLE+cover note = the same UKEY
+		   passed in) — feeds the schedule's GST-vs-Service-Tax premium rows,
+		   the GST-on-TPCA line and the GST clause, exactly as the legacy
+		   preview. GST_OTHAMT is combined with GST_FWCMSAMT (the FWCMS-fee GST
+		   portion) as legacy does before display. */
+		String GST_OTHAMT	= "0.00";
+		String GST_FWCMSAMT	= "0.00";
+		myQuery = "SELECT GST_PCT,GST_AMT,GST_OTHAMT,GST_FWCMSAMT,GST_RT,GST_TAX_NO "+
+				  "FROM TB_GST_CN WHERE UKEY=? WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, CNCODE);
+		rs = pstmt.executeQuery();
+		if (rs.next()){
+			htFWHS.put("GST_PCT",		nz(rs.getString("GST_PCT")));
+			htFWHS.put("GST_AMT",		nz(rs.getString("GST_AMT")));
+			GST_OTHAMT		= nz(rs.getString("GST_OTHAMT"));
+			GST_FWCMSAMT	= nz(rs.getString("GST_FWCMSAMT"));
+			htFWHS.put("GST_RT",		nz(rs.getString("GST_RT")));
+			htFWHS.put("GST_TAX_NO",	nz(rs.getString("GST_TAX_NO")));
+		}
+		rs.close();
+		pstmt.close();
+		if (htFWHS.get("GST_PCT") == null)		htFWHS.put("GST_PCT", "");
+		if (htFWHS.get("GST_AMT") == null)		htFWHS.put("GST_AMT", "");
+		if (htFWHS.get("GST_RT") == null)		htFWHS.put("GST_RT", "");
+		if (htFWHS.get("GST_TAX_NO") == null)	htFWHS.put("GST_TAX_NO", "");
+		if (GST_FWCMSAMT.equals("")) GST_FWCMSAMT = "0.00";
+		if (GST_OTHAMT.equals("")) GST_OTHAMT = "0.00";
+		htFWHS.put("GST_OTHAMT",	GST_OTHAMT);
+		htFWHS.put("GST_FWCMSAMT",	GST_FWCMSAMT);
+
+		/* SST switch-over date (first non-zero TB_SST FWHS row) and the
+		   clause-printing control date (TB_CONTROL CLAUSE_DATE/FWIGFWHS),
+		   both compared against ISSDATE by the schedule template. */
+		myQuery = "SELECT EFFDATE FROM TB_SST WHERE INSCODE='08' AND MAINCLS='FWHS' "+
+				  "AND SST_PCT != '0.00' ORDER BY EFFDATE ASC FETCH FIRST ROW ONLY WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		rs = pstmt.executeQuery();
+		htFWHS.put("SST_EFFDATE", rs.next() ? nz(rs.getString("EFFDATE")) : "");
+		rs.close();
+		pstmt.close();
+
+		myQuery = "SELECT VALUE1 FROM TB_CONTROL WHERE INSCODE='08' AND TYPE='CLAUSE_DATE' "+
+				  "AND CODE='FWIGFWHS' WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		rs = pstmt.executeQuery();
+		htFWHS.put("CLAUSE_EFFDATE", rs.next() ? nz(rs.getString("VALUE1")) : "");
+		rs.close();
+		pstmt.close();
+
+		/* Clause / warranty codes (TB_FWHSSCH.POL_CLAUSE, ^-delimited) resolved
+		   twice against TB_NMCLAUSE like the legacy preview: MAINCLS='WM' gives
+		   the code + description list printed on the schedule ("CLAUSES"),
+		   MAINCLS='BG' gives the description + cleaned narration pages
+		   ("NARRATIONS" — codes without a BG row are dropped, as legacy). */
+		ArrayList alCWCodes = new ArrayList();
+		java.util.StringTokenizer stCW = new java.util.StringTokenizer(polClause,"^");
+		while (stCW.hasMoreTokens()) alCWCodes.add(stCW.nextToken());
+
+		ArrayList alClauses		= new ArrayList();
+		ArrayList alNarrations	= new ArrayList();
+		for (int i = 0; i < alCWCodes.size(); i++){
+			String sCode = (String) alCWCodes.get(i);
+
+			Hashtable htClause = new Hashtable();
+			htClause.put("CODE", sCode);
+			htClause.put("DESCP", "");
+			myQuery = "SELECT DESCP FROM TB_NMCLAUSE WHERE CODE=? AND INSCODE=? AND MAINCLS='WM' WITH UR";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1, sCode);
+			pstmt.setString(2, PRINCIPLE);
+			rs = pstmt.executeQuery();
+			if (rs.next()){
+				htClause.put("DESCP", nz(rs.getString("DESCP")));
+			}
+			rs.close();
+			pstmt.close();
+			alClauses.add(htClause);
+
+			myQuery = "SELECT DESCP,NARRATION FROM TB_NMCLAUSE WHERE CODE=? AND INSCODE=? AND MAINCLS='BG' WITH UR";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1, sCode);
+			pstmt.setString(2, PRINCIPLE);
+			rs = pstmt.executeQuery();
+			if (rs.next()){
+				Hashtable htNarr = new Hashtable();
+				htNarr.put("CODE",	sCode);
+				htNarr.put("DESCP",	nz(rs.getString("DESCP")));
+				/* narration whitespace clean-up, same replace sequence the
+				   legacy preview runs before printing */
+				String NARRATION = nz(rs.getString("NARRATION"));
+				NARRATION = NARRATION.replace("\n\n","^nbsp^nbsp");
+				NARRATION = NARRATION.replace("\n"," ");
+				NARRATION = NARRATION.replace("^nbsp^nbsp","\n\n");
+				NARRATION = NARRATION.replace("`","\n");
+				int pos;
+				while ((pos = NARRATION.indexOf("  ")) > -1){
+					NARRATION = NARRATION.substring(0,pos) + NARRATION.substring(pos+1);
+				}
+				htNarr.put("NARRATION", NARRATION.trim());
+				alNarrations.add(htNarr);
+			}
+			rs.close();
+			pstmt.close();
+		}
+		htFWHS.put("CLAUSES",		alClauses);
+		htFWHS.put("NARRATIONS",	alNarrations);
 
 		/* Worker rows: TB_FWHSITEM.UKEY is per-worker
 		   (INSCODE+cover note + '$1$<seq>'), so match with a LIKE prefix,
