@@ -516,28 +516,71 @@
 				privacyClausePdf = "";
 			}
 
-			/* The Guarantee Letter (FWIG_GL) does NOT carry the Important
-			   Notice — it is a guarantee addressed to Immigration, not a
-			   policy sold to the employer. The policy schedules (FWIG_SCH /
-			   FWHS_SCH) keep it. */
-			boolean includeImportantNotice = !DOC.equals("FWIG_GL");
+			/* Important Notice placement, per document:
+			   - FWIG_SCH: NOT merged here — the schedule template embeds the
+			     pop_incl_f2 port (pop_fwcms_important_notice_print.jsp) as a
+			     jsp:include after a plain PAGEBREAK, exactly where the legacy
+			     pop_cn_FWIG_SCH_preview.jsp includes pop_incl_f2.jsp, so the
+			     notice already travels inside the rendered body above.
+			   - FWIG_GL: does NOT carry the Important Notice — it is a
+			     guarantee addressed to Immigration, not a policy sold to the
+			     employer.
+			   - FWHS_SCH: keeps the appendix loopback below until its
+			     document template exists to embed the include itself. */
+			boolean includeImportantNotice = DOC.equals("FWHS_SCH");
 
-			/* Important Notice: like the Privacy Clause, it is not a static
-			   PDF in the legacy EASC app - it is the JSP include pop_incl_f2.jsp
-			   (FWIG_SCH check_ind="Y", FWHS_SCH check_ind="H", identical FMOS/
-			   BNMLINK/PIDM notice). Loop back to pop_fwcms_important_notice_
-			   print.jsp, rasterise it with the Liberty letterhead, and hand the
-			   rendered PDF to mergeAppendix for the Important Notice slot. There
-			   is NO static fallback (Important_Notice.pdf is retired), so a
-			   render failure here is fatal - the outer catch shows the friendly
-			   error page and the policy is never streamed without its notice. */
+			/* Important Notice (FWHS_SCH only - see the placement note above):
+			   like the Privacy Clause, it is not a static PDF in the legacy
+			   EASC app - it is the JSP include pop_incl_f2.jsp (check_ind="H"
+			   for FWHS). Loop back to pop_fwcms_important_notice_print.jsp,
+			   rasterise it with the Liberty letterhead, and hand the rendered
+			   PDF to mergeAppendix for the Important Notice slot. There is NO
+			   static fallback (Important_Notice.pdf is retired), so a render
+			   failure here is fatal - the outer catch shows the friendly error
+			   page and the policy is never streamed without its notice. */
 			String importantNoticePdf = "";
 			if (includeImportantNotice)
 			{
 				try
 				{
+					/* pop_incl_f2.jsp parameters: check_ind selects the notice
+					   branch ("Y"=FWIG, "H"=FWHS, the same values the legacy
+					   previews pass), checkdigit is the e-ASC tracking mark
+					   computed as in pop_cn_FWIG_SCH_preview.jsp - jumbleAlternate
+					   of <CNCODE last 2>*<MMdd of ISSDATE>*<CLASS> (class-table
+					   ISSDATE is raw yyyyMMdd, so MMdd is a substring). Best
+					   effort: an empty checkdigit renders like the legacy include
+					   given an empty param. */
+					String IN_CHECK_IND		= INSTYPE.equals("H") ? "H" : "Y";
+					String IN_CHECKDIGIT	= "";
+					try
+					{
+						/* FWIG print model carries the TB_FWIGCN cover-note code;
+						   the FWHS model does not, so fall back to the DTL
+						   linkage code there */
+						String cdCncode		= (String)htPrint.get("CNCODE");
+						if (cdCncode == null || cdCncode.equals("")) cdCncode = CNOTE;
+						String cdIssdate	= (String)htPrint.get("ISSDATE");
+						String cdClass		= (String)htPrint.get("CLASS");
+						if (cdCncode != null && cdCncode.length() >= 2
+							&& cdIssdate != null && cdIssdate.length() >= 8)
+						{
+							String cdAll = cdCncode.substring(cdCncode.length()-2)
+								+ "*" + cdIssdate.substring(4,8)
+								+ "*" + (cdClass == null ? "" : cdClass);
+							IN_CHECKDIGIT = common.jumbleAlternate(cdAll);
+						}
+					}
+					catch (Exception cdEx)
+					{
+						log(UUID, DOC, "appendix", "Important Notice checkdigit computation failed ("
+							+ cdEx + ") - continuing with empty checkdigit");
+					}
+
 					String inData  = URLEncoder.encode("TYPE") + "=" + URLEncoder.encode("GRAB");
 					inData += "&" + URLEncoder.encode("UUID") + "=" + URLEncoder.encode(UUID);
+					inData += "&" + URLEncoder.encode("check_ind") + "=" + URLEncoder.encode(IN_CHECK_IND);
+					inData += "&" + URLEncoder.encode("checkdigit") + "=" + URLEncoder.encode(IN_CHECKDIGIT);
 
 					String inURL = server_root + request.getContextPath()
 						+ "/bestinet_online/template/pop_fwcms_important_notice_print.jsp?option=print";

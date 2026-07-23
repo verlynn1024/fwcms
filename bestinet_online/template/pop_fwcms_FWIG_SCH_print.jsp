@@ -24,21 +24,30 @@
      linkage (TB_FWCMS_ONLINE_DTL.CNCODE = TB_FWIGCN.UKEY); no displayed
      value is read from them.
 
+     The body follows the legacy preview's include order exactly: schedule
+     body, issued-by / declaration block (pop_incl_f1 equivalent, inline),
+     a plain <PAGEBREAK></PAGEBREAK>, the Important Notice via a
+     jsp:include of pop_fwcms_important_notice_print.jsp (the pop_incl_f2
+     port, check_ind="Y" + the e-ASC checkdigit computed as the legacy
+     preview does), then the clause narrations (pop_incl_f3 equivalent)
+     with no pagebreak between notice and narrations - matching
+     pop_cn_FWIG_SCH_preview.jsp lines around its pop_incl_f1/f2/f3
+     includes. Because the Important Notice travels in the body, the
+     generator does NOT appendix-merge it for FWIG_SCH.
+
      UNLIKE the legacy preview, the running letterhead header (pop_incl_h1)
-     and the Important Notice (pop_incl_f2) plus the privacy appendix are
-     NOT emitted here - the generator adds them:
+     and the privacy appendix are NOT emitted here - the generator adds
+     them:
 
         - gen_fwcms_pdf.jsp (schedulePipeline branch) scrapes the header
           markers below (CATEGO1/2, REFMAI1/2, HEADER1-4) and builds the
           running header via FWCMSOnline.buildHeaderHTML / buildHeaderHTML2,
-          rendering this body with a per-page header + footer.
-        - FWCMSOnline.mergeAppendix merges the Important Notice and the
-          privacy documents onto the stream afterwards (appendixRequired =
-          true, includeImportantNotice = true for FWIG_SCH).
-
-     This template therefore emits TWO body sections split by a plain
-     <PAGEBREAK></PAGEBREAK>: the schedule (premium box, worker listing,
-     clauses, issued-by block) and the clause-narration pages.
+          rendering this body with a per-page header + footer. RP_html2pdf
+          honours the plain <PAGEBREAK> inside the body, so the notice and
+          narration pages carry the running schedule header, as legacy.
+        - FWCMSOnline.mergeAppendix merges the privacy documents onto the
+          stream afterwards (appendixRequired = true,
+          includeImportantNotice = false for FWIG_SCH).
 
      Font sizes are emitted quoted (size="2", size="2.5", size="3") so
      FWCMSOnline.normaliseFontSizes maps them to px before rendering.
@@ -540,11 +549,45 @@
 	</tr>
 </table>
 
-<%-- ===== Clause narrations (pop_incl_f3 equivalent) on their own
-     section - the generator renders each PAGEBREAK section with the
-     running schedule header ===== --%>
-<% if (CLAUSE_PRINT.equals("Y") && vNARRATION.size() > 0) { %>
+<%-- ===== Important Notice (pop_incl_f2 include, check_ind="Y") - same
+     position and parameters as the legacy pop_cn_FWIG_SCH_preview.jsp:
+     a plain PAGEBREAK after the issued-by block, then the include, with
+     the e-ASC checkdigit computed exactly as the legacy preview does
+     (jumbleAlternate of <CNCODE last 2>*<MMdd of ISSDATE>*<CLASS>).
+     RP_html2pdf breaks the page at <PAGEBREAK> inside this section, so
+     the notice pages carry the running schedule header, as legacy. ===== --%>
+<%
+	String CHECKDIGIT = "";
+	try
+	{
+		SimpleDateFormat checkdigitformat = new SimpleDateFormat("MMdd");
+		String ALLDIGIT = dispCNCODE.substring(dispCNCODE.length()-2, dispCNCODE.length())
+			+ "*" + checkdigitformat.format(timestampFormat2.parse(ISSDATE))
+			+ "*" + common.setNullToString((String)htFWIG.get("CLASS"));
+		CHECKDIGIT = common.jumbleAlternate(ALLDIGIT);
+	}
+	catch (Exception cdEx)
+	{
+		System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=FWIG_SCH stage=template-render - "
+			+ "checkdigit computation failed (" + cdEx + ") - rendering notice with empty checkdigit");
+		CHECKDIGIT = "";
+	}
+%>
 <PAGEBREAK></PAGEBREAK>
+<jsp:include page="pop_fwcms_important_notice_print.jsp">
+	<jsp:param name="checkdigit"	value="<%=CHECKDIGIT%>" />
+	<jsp:param name="check_ind"		value="Y" />
+</jsp:include>
+
+<%-- ===== Clause narrations (pop_incl_f3 equivalent) - directly after
+     the Important Notice with no PAGEBREAK, as in the legacy preview
+     (its pagebreak before pop_incl_f3 is commented out). Wrapped in its
+     own <html> block exactly like pop_incl_f3.jsp: the Important Notice
+     include above closes its </html>, and content after a </html> with
+     no re-opening <html> is dropped by the PDF renderer - each legacy
+     pop_incl_f*.jsp therefore supplies its own wrapper. ===== --%>
+<% if (CLAUSE_PRINT.equals("Y") && vNARRATION.size() > 0) { %>
+<html>
 <table width="100%" border="1" cellspacing="0" cellpadding="3" wrap="off">
 	<tr>
 		<th bordercolor="#FFFFFF" width="100%" align="left" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">The following endorsements, warranties, clauses or extensions are not applicable unless indicated in the Policy Schedule, in which case the endorsement(s), warranty(ies) , clause(s) or extension(s)  so indicated shall be deemed to form part of the policy<br><i>Endorsemen, waranti, fasal atau tambahan adalah tidak digunapakai kecuali dinyatakan di dalam Jadual Polisi, di mana endorsemen, waranti, fasal atau tambahan yang dinyata akan dianggap membentuk sebahagian daripada polisi</i></font></th>
@@ -572,6 +615,7 @@
 	}
 %>
 </table>
+</html>
 <% } %>
 
 </body>

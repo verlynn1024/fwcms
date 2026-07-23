@@ -2183,8 +2183,10 @@ public class FWCMSOnline extends DB_Contact{
 	   ===================================================================== */
 
 	/* Appendix inventory (design doc section 8), resolved against
-	   configk.prop template_banner_path at merge time. */
-	private static final String APPENDIX_IMPORTANT_NOTICE	= "Important_Notice.pdf";
+	   configk.prop template_banner_path at merge time. The Important Notice
+	   is NOT in this inventory: like the legacy schedule pipeline (which
+	   compiles pop_incl_f2.jsp as a PAGEBREAK section of the preview, never
+	   a static file) it is JSP-rendered at print time - see mergeAppendix. */
 	private static final String APPENDIX_PRIVACY_CLAUSE		= "Privacy_Clause.pdf";
 	private static final String APPENDIX_PRIVACY_ENG		= "Privacy_Notice_Eng.pdf";
 	private static final String APPENDIX_PRIVACY_BM			= "Privacy_Notice_BM.pdf";
@@ -2491,6 +2493,29 @@ public class FWCMSOnline extends DB_Contact{
 		return mergedFile;
 	}
 
+	/* Legacy-signature shims. WebSphere keeps the translated servlet class of
+	   an already-compiled JSP, so a gen_fwcms_pdf.jsp compiled before the
+	   Important Notice went JSP-rendered still links against these older
+	   signatures - without them a redeploy of this class alone dies with
+	   NoSuchMethodError (SRVE0777E) instead of a diagnosable error page.
+	   They supply no JSP-rendered Important Notice, so when
+	   includeImportantNotice is true the full method below throws its
+	   retired-static-fallback error; redeploying the current
+	   gen_fwcms_pdf.jsp (which renders the notice and calls the full
+	   signature) is the actual fix. */
+	public void mergeAppendix(String filename, String bannerPath, String cutOff) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, null, null, true);
+	}
+
+	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, null, true);
+	}
+
+	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
+			boolean includeImportantNotice) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, null, includeImportantNotice);
+	}
+
 	/* PDFBox merge of the 4 mandatory appendix PDFs onto the generated
 	   body, in required order: Important Notice, Privacy Clause, Privacy
 	   Notice Eng, Privacy Notice BM (Old variants when cutOff=OLD).
@@ -2506,23 +2531,29 @@ public class FWCMSOnline extends DB_Contact{
 	   supplied and readable it takes the Privacy Clause slot, so the clause
 	   comes from the JSP rather than a Privacy_Clause.pdf that does not
 	   exist. Passing null / "" (or a missing file) falls back to the static
-	   APPENDIX_PRIVACY_CLAUSE, keeping the old behaviour available. */
-	public void mergeAppendix(String filename, String bannerPath, String cutOff) throws Exception{
-		mergeAppendix(filename, bannerPath, cutOff, null, true);
-	}
+	   APPENDIX_PRIVACY_CLAUSE, keeping the old behaviour available.
 
-	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf) throws Exception{
-		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, true);
-	}
+	   The Important Notice is likewise NOT a static file in the legacy EASC
+	   app - the schedule (FOREIGN WORKERS INSURANCE GUARANTEE SCHEDULE /
+	   JADUAL GERENTI INSURANS PEKERJA ASING) compiles pop_incl_f2.jsp as a
+	   PAGEBREAK section of pop_cn_FWIG_SCH_preview.jsp, rendered by
+	   gen_cn_FWIG_html2pdf_rep.jsp. gen_fwcms_pdf.jsp loops back to the
+	   pop_incl_f2 port (pop_fwcms_important_notice_print.jsp), rasterises
+	   it, and passes the rendered PDF here as importantNoticePdf. There is
+	   NO static fallback - Important_Notice.pdf is retired - so a missing /
+	   unreadable importantNoticePdf while includeImportantNotice=true is
+	   fatal: the throw propagates to gen_fwcms_pdf.jsp's render catch and
+	   the policy is never streamed without its notice.
 
-	/* includeImportantNotice=false drops the Important Notice from the front
-	   of the appendix. The FWIG Guarantee Letter does NOT carry the Important
-	   Notice (it is a guarantee to Immigration, not a policy sold to the
-	   employer), so gen_fwcms_pdf.jsp passes false for FWIG_GL; the policy
-	   schedules (FWIG_SCH / FWHS_SCH) pass true and keep it. The Privacy
+	   includeImportantNotice=false drops the Important Notice from the front
+	   of the appendix. gen_fwcms_pdf.jsp passes true only for FWHS_SCH: the
+	   FWIG Guarantee Letter does not carry the notice at all, and the FWIG
+	   Policy Schedule embeds the pop_incl_f2 include inside its own body
+	   (pop_fwcms_FWIG_SCH_print.jsp), matching the legacy preview, so it
+	   arrives here already part of the rendered document. The Privacy
 	   Clause / Privacy Notice (Eng) / Privacy Notice (BM) always follow. */
 	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
-			boolean includeImportantNotice) throws Exception{
+			String importantNoticePdf, boolean includeImportantNotice) throws Exception{
 
 		if (cutOff == null) cutOff = "";
 		cutOff = cutOff.trim().toUpperCase();
@@ -2556,9 +2587,19 @@ public class FWCMSOnline extends DB_Contact{
 
 		ArrayList appendixList = new ArrayList();
 		/* Important Notice — first in the appendix, but only when the caller
-		   wants it (the Guarantee Letter omits it). */
+		   wants it (the Guarantee Letter omits it). JSP-rendered only
+		   (pop_incl_f2.jsp / pop_fwcms_important_notice_print.jsp): no static
+		   Important_Notice.pdf fallback exists, so the rendered PDF is
+		   mandatory here. */
 		if (includeImportantNotice){
-			appendixList.add(bannerPath + "/" + APPENDIX_IMPORTANT_NOTICE);
+			if (importantNoticePdf == null || importantNoticePdf.trim().equals("")
+				|| !new File(importantNoticePdf).exists()){
+				throw new Exception("[FWCMSPRINT] mergeAppendix: JSP-rendered Important Notice missing ["
+					+ importantNoticePdf + "] - no static fallback (Important_Notice.pdf is retired), failing the document");
+			}
+			appendixList.add(importantNoticePdf);
+			System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice from JSP-rendered PDF ["
+				+ importantNoticePdf + "]");
 		}else{
 			System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice OMITTED (includeImportantNotice=false)");
 		}
