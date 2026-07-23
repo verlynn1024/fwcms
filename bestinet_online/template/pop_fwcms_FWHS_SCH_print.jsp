@@ -412,7 +412,7 @@
 <%	} %>
 	<!-- STFee_FT_A5_DisplayStampFees --- Display Stamp Fees for PDF [StampFees_Flowchart_v1.0] -->
   <tr>
-    <td bordercolor="#000000" <%if(!GST_RT.equals("") && !GST_TRIGGER.equals("N")){%>rowspan="5" <%}else{%>rowspan="5"<%}if(showStampFees){%>rowspan="6" <%}%>colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / </font>
+    <td bordercolor="#000000" <%if(showStampFees){%>rowspan="6"<%}else{%>rowspan="5"<%}%> colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / </font>
     <font face="Verdana, Arial, Helvetica, sans-serif" size="2" border="0"><i>Tempoh Insurans</i><br>
 		(a)&nbsp;From <b><%= ISS_CNTIME1 %>&nbsp;<%= common.stringToHTMLString(EFFDATE)+" " %></b> to <b><%= common.stringToHTMLString(EXPDATE) %></b> (both dates inclusive)<br>
 	<i>&nbsp;&nbsp;&nbsp;Dari&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sehingga&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(termasuk kedua-dua tarikh)</i><br>
