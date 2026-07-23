@@ -950,6 +950,386 @@ public class FWCMSOnline extends DB_Contact{
 		return alWorkers;
 	}
 
+	/* =====================================================================
+	   MAIN-TABLE ISSUANCE (FWCMS_MAIN_TABLE_INTEGRATION.md)
+	   Insert a portal journey's product into the SAME class tables the
+	   legacy eCover "Save cover note" step writes, by reusing the legacy
+	   DB_FWIG / DB_FWHS DAOs — no class-table SQL is duplicated here.
+
+	     FWIG: TB_TRANSACTION -> TB_FWIGCN -> TB_FWIGMAST -> TB_FWIGSCH
+	     FWHS: TB_TRANSACTION -> TB_FWHSCN -> TB_FWHSSCH  -> TB_FWHSITEM
+
+	   The generated class-table key (UKEY = PRINCIPLE + cover-note number)
+	   is stamped back onto the online DTL row as its CNCODE — the same
+	   value getFWIGPrintData / getFWHSPrintData key their WHERE UKEY=?
+	   reads on, so a product becomes printable the moment issuance lands.
+	   Every column written was verified against those two print reads and
+	   the "existing database.sql" describes (all class-table columns are
+	   nullable except the keys, so unavailable legacy fields stay blank).
+
+	   Connections: this bean's own connection (opened by the caller via
+	   makeConnection) serves the TB_FWCMS_ONLINE_* reads and the DTL
+	   stamp-back; each legacy DAO bean drives the class-table inserts on
+	   its own connection inside a single setAutoCommitOff -> ... ->
+	   conCommit transaction, rolled back as one unit on any error.
+	   ===================================================================== */
+
+	/* FWIG cover-note pool (DB_FWIG.getCoverNoteNo pulls the next free
+	   number from here and marks it DELETED='Y'). Deployment prerequisite —
+	   adjust these two constants to this installation's FWIG pool
+	   table/field (integration doc section 7). */
+	public static final String FWIG_CN_POOL_TABLE = "TB_FWIGCNOTE";
+	public static final String FWIG_CN_POOL_FIELD = "CNOTENO";
+
+	/* Legacy DAOs held as beans — FWCMSOnline stays a thin controller. */
+	private DB_FWIG dbFWIG = new DB_FWIG();
+	private DB_FWHS dbFWHS = new DB_FWHS();
+
+	private SimpleDateFormat issDateFormat = new SimpleDateFormat("yyyyMMdd");
+	private SimpleDateFormat cnTimeFormat  = new SimpleDateFormat("HHmmss");
+
+	/* DECIMAL columns come back from the DTL Hashtable as plain strings
+	   ("1234.00", "" when NULL) — parse for the double-typed DAO params. */
+	private double toDouble(String sValue){
+		return toDecimal(sValue).doubleValue();
+	}
+
+	/* Issue one product of a journey into the FWCMS main class tables.
+	   INSTYPE is the online DTL key ("I" = FWIG, "H" = FWHS). Idempotent:
+	   a product already stamped with a real (non-MCK) class-table key is
+	   skipped and its existing key returned. Returns the class-table UKEY
+	   stamped onto the DTL row (the printing module's linkage). */
+	public String issueMainTables(String UUID, String INSTYPE, String USERID) throws Exception{
+
+		Hashtable htTXN = getFWCMSONLINETRANS(UUID);
+		if (htTXN == null) throw new Exception("issueMainTables: journey not found UUID=" + UUID);
+		Hashtable htDTL = getFWCMSONLINEDTL(UUID, INSTYPE);
+		if (htDTL == null) throw new Exception("issueMainTables: no DTL row UUID=" + UUID + " INSTYPE=" + INSTYPE);
+
+		/* idempotency — never issue the same product twice */
+		String sExisting = (String)htDTL.get("CNCODE");
+		if ("ISSUED".equals((String)htDTL.get("INS_STATUS"))
+				&& !sExisting.equals("") && !sExisting.startsWith("MCK")){
+			return sExisting;
+		}
+
+		ArrayList alWorkers = getFWCMSONLINEWORKERList(UUID, INSTYPE);
+
+		String UKEY = INSTYPE.equals("I")
+			? issueFWIG(htTXN, htDTL, alWorkers, USERID)
+			: issueFWHS(htTXN, htDTL, alWorkers, USERID);
+
+		/* stamp the linkage back onto the online DTL row (POLICY_NO stays
+		   blank — like the legacy save, the policy number is assigned by a
+		   later conversion, and the portal displays the CN key meanwhile) */
+		updateFWCMSONLINEDTLIssued(UKEY, "", issDateFormat.format(new Date()), USERID, UUID, INSTYPE);
+
+		return UKEY;
+	}
+
+	/* ^-join one field of the worker snapshot (TB_FWCMS_ONLINE_WORKER) for
+	   the TB_FWIGMAST list columns; getKey strips any " DESCRIPTION" tail a
+	   resolved code may carry. */
+	private String joinWorkerField(ArrayList alWorkers, String sField, boolean bCodeOnly){
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < alWorkers.size(); i++){
+			Hashtable htW = (Hashtable) alWorkers.get(i);
+			String sVal = nz((String)htW.get(sField));
+			if (bCodeOnly) sVal = comm.getKey(sVal, " ");
+			if (i > 0) sb.append("^");
+			sb.append(sVal);
+		}
+		return sb.toString();
+	}
+
+	/* Same-length ^-list of a constant token (blank legacy fields). */
+	private String joinConstant(int iCount, String sToken){
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < iCount; i++){
+			if (i > 0) sb.append("^");
+			sb.append(sToken);
+		}
+		return sb.toString();
+	}
+
+	/* Service-tax percentage backed out of the amounts (the DTL snapshot
+	   keeps only the amounts) — 2dp, 0 when there is no taxable base. */
+	private double backOutPct(double dAmount, double dBase){
+		if (dBase <= 0) return 0;
+		return Math.round((dAmount / dBase) * 100.0 * 100.0) / 100.0;
+	}
+
+	/* FWIG — TB_TRANSACTION, TB_FWIGCN, TB_FWIGMAST, TB_FWIGSCH via the
+	   legacy DB_FWIG bean (same methods, same tables as the eCover save:
+	   integration doc section 3). Returns the new UKEY. */
+	private String issueFWIG(Hashtable htTXN, Hashtable htDTL, ArrayList alWorkers, String USERID) throws Exception{
+
+		String PRINCIPLE = GL_PRINCIPLE_CODE;
+		String ACCODE    = comm.getKey((String)htTXN.get("ACCODE"), " ");
+
+		String ISSDATE = issDateFormat.format(new Date());
+		String CNTIME  = cnTimeFormat.format(new Date());
+		String NOW14   = now();
+		String EFFDATE = (String)htDTL.get("EFF_DATE");
+		String EXPDATE = (String)htDTL.get("EXP_DATE");
+
+		/* money snapshot captured at premium calculation */
+		double dSUMINS    = toDouble((String)htDTL.get("SUM_INSURED"));
+		double dGPREM     = toDouble((String)htDTL.get("GROSS_PREMIUM"));
+		double dREBATE    = toDouble((String)htDTL.get("REBATE_AMT"));
+		double dSTAX      = toDouble((String)htDTL.get("SERVICE_TAX"));
+		double dSTAMP     = toDouble((String)htDTL.get("STAMP_DUTY"));
+		double dNETPREM   = toDouble((String)htDTL.get("NET_PREMIUM"));
+		double dSTAXPCT   = backOutPct(dSTAX, dGPREM - dREBATE);
+
+		String FWCMSREF = (String)htDTL.get("BTN_TRANS_REF");
+		if (FWCMSREF.equals("")) FWCMSREF = (String)htDTL.get("REFNO");
+
+		String sUKEY = "";
+		try{
+			dbFWIG.makeConnection();
+			dbFWIG.setAutoCommitOff();
+
+			/* 0. cover-note number from the pre-seeded pool */
+			String CNCODE = dbFWIG.getCoverNoteNo(PRINCIPLE, ACCODE, FWIG_CN_POOL_TABLE, FWIG_CN_POOL_FIELD);
+			if (CNCODE == null || CNCODE.trim().equals("")){
+				throw new Exception("FWIG cover-note pool empty for ACCODE=" + ACCODE
+					+ " (" + FWIG_CN_POOL_TABLE + "." + FWIG_CN_POOL_FIELD + " not seeded)");
+			}
+			sUKEY = PRINCIPLE + CNCODE;
+
+			Vector vUWYR = dbFWIG.fnGetUWYRVector(ISSDATE, PRINCIPLE);
+			String UWYR_YR  = vUWYR.size() > 0 ? (String)vUWYR.elementAt(0) : "";
+			String UWYR_MTH = vUWYR.size() > 1 ? (String)vUWYR.elementAt(1) : "";
+
+			/* 1. TB_TRANSACTION — class IG, type CN, CNSTATUS='SAVED' */
+			dbFWIG.insert_transaction("IG", "CN", USERID, NOW14, "", "N",
+				PRINCIPLE, ACCODE, ISSDATE, "", dNETPREM, CNCODE, "", "", "");
+
+			/* 2. TB_FWIGCN — cover-note header + employer block (G1 journey
+			      columns; the print read resolves display fallbacks) */
+			dbFWIG.Insert_FWIGCN(sUKEY, CNCODE, "", USERID, PRINCIPLE, ACCODE, "", "",
+				"", "", "CN", ISSDATE, EFFDATE, EXPDATE, "18", CNTIME, "",
+				"", "", (String)htTXN.get("EMPLOYER_NAME"), "",
+				(String)htTXN.get("EMPLOYER_ADDRESS_1"), (String)htTXN.get("EMPLOYER_ADDRESS_2"),
+				(String)htTXN.get("EMPLOYER_ADDRESS_3"), (String)htTXN.get("EMPLOYER_ADDRESS_4"), "",
+				"", "", "", "", (String)htTXN.get("EMPLOYER_STATE"), (String)htTXN.get("EMPLOYER_POSTCODE"),
+				"", (String)htTXN.get("NATURE_BUSINESS_DESCP"),
+				"", "", (String)htTXN.get("EMPLOYER_PHONE"), "", (String)htTXN.get("EMPLOYER_EMAIL"), "", "",
+				(String)htTXN.get("BUSINESS_NO"), "", "C", "", "SAVED", "", "", "", dNETPREM, "",
+				"", "", "", "N", "", "", "", "",
+				UWYR_YR, UWYR_MTH, "", "", "IG", "", "");
+
+			/* 3. TB_FWIGMAST — ^-delimited worker lists + per-nationality
+			      summary + the immigration addressee (chosen branch included) */
+			String IMMI_NAME    = (String)htTXN.get("IMMI_DESCP");
+			String IMMI_ADDRESS = (String)htTXN.get("IMMI_ADDRESS");
+			if (IMMI_ADDRESS.equals("")) IMMI_ADDRESS = IMMI_NAME;
+
+			int iWorkers = alWorkers.size();
+			String EMP_NAME        = joinWorkerField(alWorkers, "NAME", false);
+			String EMP_PASSPORT    = joinWorkerField(alWorkers, "PASSPORT", false);
+			String EMP_NATIONALITY = joinWorkerField(alWorkers, "NATIONALITY", true);
+			String EMP_GENDER      = joinWorkerField(alWorkers, "GENDER", true);
+			String EMP_AMOUNT      = joinWorkerField(alWorkers, "IG_AMOUNT", false);
+			String EMP_PREM        = joinWorkerField(alWorkers, "PREMIUM", false);
+
+			/* nationality summary in first-seen order */
+			LinkedHashMap lhmSummary = new LinkedHashMap();
+			for (int i = 0; i < iWorkers; i++){
+				Hashtable htW = (Hashtable) alWorkers.get(i);
+				String sNat  = comm.getKey(nz((String)htW.get("NATIONALITY")), " ");
+				double[] dSum = (double[]) lhmSummary.get(sNat);
+				if (dSum == null){ dSum = new double[3]; lhmSummary.put(sNat, dSum); }
+				dSum[0] += 1;                                     /* workers  */
+				dSum[1] += toDouble((String)htW.get("IG_AMOUNT"));/* IG amt   */
+				dSum[2] += toDouble((String)htW.get("PREMIUM"));  /* premium  */
+			}
+			StringBuilder sbNat = new StringBuilder(); StringBuilder sbNo  = new StringBuilder();
+			StringBuilder sbAmt = new StringBuilder(); StringBuilder sbTot = new StringBuilder();
+			StringBuilder sbPrm = new StringBuilder();
+			Iterator itSum = lhmSummary.entrySet().iterator();
+			boolean bFirst = true;
+			while (itSum.hasNext()){
+				Map.Entry entry = (Map.Entry) itSum.next();
+				double[] dSum = (double[]) entry.getValue();
+				if (!bFirst){ sbNat.append("^"); sbNo.append("^"); sbAmt.append("^"); sbTot.append("^"); sbPrm.append("^"); }
+				bFirst = false;
+				sbNat.append((String)entry.getKey());
+				sbNo.append((int)dSum[0]);
+				sbAmt.append(comm.fnGetValue2(dSum[1]));
+				sbTot.append(comm.fnGetValue2(dSum[1]));
+				sbPrm.append(comm.fnGetValue2(dSum[2]));
+			}
+
+			dbFWIG.Insert_FWIGMAST(sUKEY,
+				(String)htTXN.get("IMMI_CODE"), IMMI_NAME, IMMI_ADDRESS,
+				"", "", "",                                    /* immi postcode/tel/fax  */
+				"", "", "",                                    /* officer name/desg/limit*/
+				GL_PRINCIPLE_NAME, "", "", "", "", "",         /* guarantor block        */
+				"0.00", "0.00",                                /* collateral amt/pct     */
+				EMP_NAME, EMP_PASSPORT, EMP_NATIONALITY,
+				joinConstant(iWorkers, "0.00"),                /* per-worker rate n/a    */
+				EMP_PREM, joinConstant(iWorkers, ""), EMP_AMOUNT,
+				joinConstant(iWorkers, ""),                    /* occupation n/a in snap */
+				sbNat.toString(), sbNo.toString(), sbAmt.toString(), sbTot.toString(),
+				sbPrm.toString(), sbPrm.toString(),
+				dSUMINS, dGPREM, dGPREM, EMP_GENDER,
+				joinConstant(iWorkers, ""));                   /* permit expiry n/a      */
+
+			/* 4. TB_FWIGSCH — premium schedule + FWCMS reference */
+			dbFWIG.Insert_FWIGSCH_CFMKT(sUKEY, "RM", "RM", 1.00, dSUMINS, dSUMINS,
+				dGPREM, dGPREM, dREBATE, backOutPct(dREBATE, dGPREM), dSTAX, dSTAXPCT,
+				dSTAMP, dNETPREM, 0, 0, 0, 0, dNETPREM, dGPREM, 0, 0,
+				"N", NOW14, FWCMSREF, "", "", "0.00");
+
+			dbFWIG.conCommit();
+		}
+		catch (Exception ex){
+			try { dbFWIG.rollBack(); } catch (Exception ignore) {}
+			throw ex;
+		}
+		finally{
+			try { dbFWIG.setAutoCommitOn(); } catch (Exception ignore) {}
+			dbFWIG.takeDown();
+		}
+
+		return sUKEY;
+	}
+
+	/* FWHS — TB_TRANSACTION, TB_FWHSCN, TB_FWHSSCH, TB_FWHSITEM via the
+	   legacy DB_FWHS bean (integration doc section 3). Returns the new
+	   UKEY. */
+	private String issueFWHS(Hashtable htTXN, Hashtable htDTL, ArrayList alWorkers, String USERID) throws Exception{
+
+		String PRINCIPLE = GL_PRINCIPLE_CODE;
+		String ACCODE    = comm.getKey((String)htTXN.get("ACCODE"), " ");
+
+		String ISSDATE = issDateFormat.format(new Date());
+		String CNTIME  = cnTimeFormat.format(new Date());
+		String NOW14   = now();
+		String EFFDATE = (String)htDTL.get("EFF_DATE");
+		String EXPDATE = (String)htDTL.get("EXP_DATE");
+
+		double dSUMINS  = toDouble((String)htDTL.get("SUM_INSURED"));
+		double dGPREM   = toDouble((String)htDTL.get("GROSS_PREMIUM"));
+		double dREBATE  = toDouble((String)htDTL.get("REBATE_AMT"));
+		double dSTAX    = toDouble((String)htDTL.get("SERVICE_TAX"));
+		double dSTAMP   = toDouble((String)htDTL.get("STAMP_DUTY"));
+		double dSVCFEE  = toDouble((String)htDTL.get("SERVICE_FEE"));
+		double dNETPREM = toDouble((String)htDTL.get("NET_PREMIUM"));
+		double dSTAXPCT = backOutPct(dSTAX, dGPREM - dREBATE);
+
+		String FWCMSREF = (String)htDTL.get("BTN_TRANS_REF");
+		if (FWCMSREF.equals("")) FWCMSREF = (String)htDTL.get("REFNO");
+
+		/* cross-link to the journey's issued FWIG cover note (IG_NO) when
+		   that product exists and carries a real class-table key */
+		String IG_NO = "";
+		Hashtable htFWIGDTL = getFWCMSONLINEDTL((String)htTXN.get("UUID"), "I");
+		if (htFWIGDTL != null){
+			String sIGKey = (String)htFWIGDTL.get("CNCODE");
+			if (!sIGKey.equals("") && !sIGKey.startsWith("MCK")) IG_NO = sIGKey;
+		}
+
+		String sUKEY = "";
+		try{
+			dbFWHS.makeConnection();
+			dbFWHS.setAutoCommitOff();
+
+			/* 0. running cover-note number (TB_CNSERIES) -> "ACCODE-n" */
+			String CNCODE = dbFWHS.getREFNO(PRINCIPLE, ACCODE, "FWHS");
+			if (CNCODE == null || CNCODE.trim().equals("")){
+				throw new Exception("FWHS cover-note series unavailable for ACCODE=" + ACCODE);
+			}
+			sUKEY = PRINCIPLE + CNCODE;
+
+			Vector vUWYR = dbFWHS.fnGetUWYRVector(ISSDATE, PRINCIPLE);
+			String UWYR_YR  = vUWYR.size() > 0 ? (String)vUWYR.elementAt(0) : "";
+			String UWYR_MTH = vUWYR.size() > 1 ? (String)vUWYR.elementAt(1) : "";
+
+			/* 1. TB_TRANSACTION — class FWHS, type CN, status SAVED */
+			dbFWHS.insert_transaction("FWHS", "CN", USERID, NOW14, "", "N",
+				PRINCIPLE, ACCODE, ISSDATE, "", dNETPREM, CNCODE, "", "", "", "SAVED");
+
+			/* 2. TB_FWHSCN — cover-note header + employer block */
+			dbFWHS.Insert_FWHSCN2(sUKEY, CNCODE, "", USERID, PRINCIPLE, ACCODE, "", "",
+				"", "", "", "CN", ISSDATE, EFFDATE, EXPDATE, CNTIME, "",
+				"", "", (String)htTXN.get("EMPLOYER_NAME"), "",
+				(String)htTXN.get("EMPLOYER_ADDRESS_1"), (String)htTXN.get("EMPLOYER_ADDRESS_2"),
+				(String)htTXN.get("EMPLOYER_ADDRESS_3"), (String)htTXN.get("EMPLOYER_ADDRESS_4"), "",
+				"", "", "", "", (String)htTXN.get("EMPLOYER_STATE"), (String)htTXN.get("EMPLOYER_POSTCODE"),
+				"", (String)htTXN.get("NATURE_BUSINESS_DESCP"),
+				"", "", (String)htTXN.get("EMPLOYER_PHONE"), "", (String)htTXN.get("EMPLOYER_EMAIL"), "", "",
+				(String)htTXN.get("BUSINESS_NO"), "", "C", "SAVED", "", "", "", dNETPREM, "",
+				"", "", "", "N", "", "", "", "",
+				UWYR_YR, UWYR_MTH, "", "FWHS", "",
+				(String)htTXN.get("NATURE_BUSINESS"), "", "", IG_NO);
+
+			/* 3. TB_FWHSSCH — premium schedule + FWCMS reference. The DTL's
+			      SERVICE_FEE bundles the TPCA fee, FWCMS service fee and
+			      their SST/GST charges (capturePremium.jsp) — carried whole
+			      in SERVICE_FEE; FWCMS_FEE stays 0 to avoid double-counting. */
+			dbFWHS.Insert_FWHSSCH(sUKEY, dSUMINS, dGPREM, dGPREM, dREBATE,
+				backOutPct(dREBATE, dGPREM), dSTAX, dSTAXPCT, dSVCFEE, 0,
+				dSTAMP, dNETPREM, 0, 0, 0, 0, dNETPREM, dGPREM, 0, 0,
+				"", 0, alWorkers.size(), "", "N", NOW14, FWCMSREF, "",
+				"", "", "", "", "0.00");
+
+			/* 4. TB_FWHSITEM — one 25-column row per worker, keyed
+			      <UKEY>$1$<seq> (integration doc section 3) */
+			if (alWorkers.size() > 0){
+				Vector vItems = new Vector();
+				for (int i = 0; i < alWorkers.size(); i++){
+					Hashtable htW = (Hashtable) alWorkers.get(i);
+					String sSeq = String.valueOf(i + 1);
+					String sPremium = nz((String)htW.get("PREMIUM"));
+					if (sPremium.equals("")) sPremium = "0";
+					Vector vItem = new Vector();
+					vItem.addElement(sUKEY + "$1$" + sSeq);                      /* 0 UKEY        */
+					vItem.addElement(sSeq);                                      /* 1 SEQNO       */
+					vItem.addElement(nz((String)htW.get("NAME")));               /* 2 EMP_NAME    */
+					vItem.addElement("");                                        /* 3 OCCPSEC     */
+					vItem.addElement("");                                        /* 4 CARD        */
+					vItem.addElement("");                                        /* 5 EMP_PLACE   */
+					vItem.addElement("");                                        /* 6 TERM_DATE   */
+					vItem.addElement("");                                        /* 7 DOB         */
+					vItem.addElement(comm.getKey(nz((String)htW.get("GENDER")), " "));      /* 8  */
+					vItem.addElement(nz((String)htW.get("PASSPORT")));           /* 9 PASSPORT    */
+					vItem.addElement(comm.getKey(nz((String)htW.get("NATIONALITY")), " ")); /* 10 */
+					vItem.addElement("");                                        /* 11 WORK_EXP   */
+					vItem.addElement(nz((String)htW.get("IG_AMOUNT")).equals("") ? "0" : (String)htW.get("IG_AMOUNT")); /* 12 SUMINS */
+					vItem.addElement(sPremium);                                  /* 13 PREMIUM    */
+					vItem.addElement("0");                                       /* 14 SERVICE_FEE*/
+					vItem.addElement("0");                                       /* 15 FWCMS_FEE  */
+					vItem.addElement(sPremium);                                  /* 16 APREM      */
+					vItem.addElement(sPremium);                                  /* 17 ORG_APREM  */
+					vItem.addElement(sPremium);                                  /* 18 ORG_GPREM  */
+					vItem.addElement("0");                                       /* 19 REBATEAMT  */
+					vItem.addElement("0");                                       /* 20 STAXAMT    */
+					vItem.addElement("0");                                       /* 21 STAXAMT_TPCA*/
+					vItem.addElement("");                                        /* 22 INS_STATUS */
+					vItem.addElement("");                                        /* 23 INSURED_FOR*/
+					vItem.addElement("");                                        /* 24 WORK_ID    */
+					vItems.addElement(vItem);
+				}
+				dbFWHS.Insert_FWHSITEM(vItems);
+			}
+
+			dbFWHS.conCommit();
+		}
+		catch (Exception ex){
+			try { dbFWHS.rollBack(); } catch (Exception ignore) {}
+			throw ex;
+		}
+		finally{
+			try { dbFWHS.setAutoCommitOn(); } catch (Exception ignore) {}
+			dbFWHS.takeDown();
+		}
+
+		return sUKEY;
+	}
+
 	/* The principal on whose behalf the portal issues the guarantee —
 	   fixed for this deployment (principal 08), so it needs no lookup. */
 	private static final String GL_PRINCIPLE_NAME = "Liberty General Insurance Berhad";
