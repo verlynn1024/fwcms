@@ -525,11 +525,16 @@
 			   - FWIG_GL: does NOT carry the Important Notice — it is a
 			     guarantee addressed to Immigration, not a policy sold to the
 			     employer.
-			   - FWHS_SCH: keeps the appendix loopback below until its
-			     document template exists to embed the include itself. */
-			boolean includeImportantNotice = DOC.equals("FWHS_SCH");
+			   - FWHS_SCH: NOT merged here — like FWIG_SCH, the schedule
+			     template embeds the pop_incl_f2 port
+			     (pop_fwcms_important_notice_print.jsp, check_ind="H") as a
+			     jsp:include after a plain PAGEBREAK, exactly where the legacy
+			     pop_cn_fwhs_preview.jsp includes pop_incl_f2.jsp, so the
+			     notice already travels inside the rendered body above. */
+			boolean includeImportantNotice = false;
 
-			/* Important Notice (FWHS_SCH only - see the placement note above):
+			/* Important Notice (appendix-merged only when a document does not
+			   embed the pop_incl_f2 port itself - see the placement note above):
 			   like the Privacy Clause, it is not a static PDF in the legacy
 			   EASC app - it is the JSP include pop_incl_f2.jsp (check_ind="H"
 			   for FWHS). Loop back to pop_fwcms_important_notice_print.jsp,
