@@ -536,8 +536,44 @@
 			{
 				try
 				{
+					/* pop_incl_f2.jsp parameters: check_ind selects the notice
+					   branch ("Y"=FWIG, "H"=FWHS, the same values the legacy
+					   previews pass), checkdigit is the e-ASC tracking mark
+					   computed as in pop_cn_FWIG_SCH_preview.jsp - jumbleAlternate
+					   of <CNCODE last 2>*<MMdd of ISSDATE>*<CLASS> (class-table
+					   ISSDATE is raw yyyyMMdd, so MMdd is a substring). Best
+					   effort: an empty checkdigit renders like the legacy include
+					   given an empty param. */
+					String IN_CHECK_IND		= INSTYPE.equals("H") ? "H" : "Y";
+					String IN_CHECKDIGIT	= "";
+					try
+					{
+						/* FWIG print model carries the TB_FWIGCN cover-note code;
+						   the FWHS model does not, so fall back to the DTL
+						   linkage code there */
+						String cdCncode		= (String)htPrint.get("CNCODE");
+						if (cdCncode == null || cdCncode.equals("")) cdCncode = CNOTE;
+						String cdIssdate	= (String)htPrint.get("ISSDATE");
+						String cdClass		= (String)htPrint.get("CLASS");
+						if (cdCncode != null && cdCncode.length() >= 2
+							&& cdIssdate != null && cdIssdate.length() >= 8)
+						{
+							String cdAll = cdCncode.substring(cdCncode.length()-2)
+								+ "*" + cdIssdate.substring(4,8)
+								+ "*" + (cdClass == null ? "" : cdClass);
+							IN_CHECKDIGIT = common.jumbleAlternate(cdAll);
+						}
+					}
+					catch (Exception cdEx)
+					{
+						log(UUID, DOC, "appendix", "Important Notice checkdigit computation failed ("
+							+ cdEx + ") - continuing with empty checkdigit");
+					}
+
 					String inData  = URLEncoder.encode("TYPE") + "=" + URLEncoder.encode("GRAB");
 					inData += "&" + URLEncoder.encode("UUID") + "=" + URLEncoder.encode(UUID);
+					inData += "&" + URLEncoder.encode("check_ind") + "=" + URLEncoder.encode(IN_CHECK_IND);
+					inData += "&" + URLEncoder.encode("checkdigit") + "=" + URLEncoder.encode(IN_CHECKDIGIT);
 
 					String inURL = server_root + request.getContextPath()
 						+ "/bestinet_online/template/pop_fwcms_important_notice_print.jsp?option=print";

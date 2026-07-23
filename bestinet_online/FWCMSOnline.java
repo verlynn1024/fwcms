@@ -2493,6 +2493,29 @@ public class FWCMSOnline extends DB_Contact{
 		return mergedFile;
 	}
 
+	/* Legacy-signature shims. WebSphere keeps the translated servlet class of
+	   an already-compiled JSP, so a gen_fwcms_pdf.jsp compiled before the
+	   Important Notice went JSP-rendered still links against these older
+	   signatures - without them a redeploy of this class alone dies with
+	   NoSuchMethodError (SRVE0777E) instead of a diagnosable error page.
+	   They supply no JSP-rendered Important Notice, so when
+	   includeImportantNotice is true the full method below throws its
+	   retired-static-fallback error; redeploying the current
+	   gen_fwcms_pdf.jsp (which renders the notice and calls the full
+	   signature) is the actual fix. */
+	public void mergeAppendix(String filename, String bannerPath, String cutOff) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, null, null, true);
+	}
+
+	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, null, true);
+	}
+
+	public void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
+			boolean includeImportantNotice) throws Exception{
+		mergeAppendix(filename, bannerPath, cutOff, privacyClausePdf, null, includeImportantNotice);
+	}
+
 	/* PDFBox merge of the 4 mandatory appendix PDFs onto the generated
 	   body, in required order: Important Notice, Privacy Clause, Privacy
 	   Notice Eng, Privacy Notice BM (Old variants when cutOff=OLD).
