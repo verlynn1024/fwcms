@@ -581,8 +581,13 @@
 
 <%-- ===== Clause narrations (pop_incl_f3 equivalent) - directly after
      the Important Notice with no PAGEBREAK, as in the legacy preview
-     (its pagebreak before pop_incl_f3 is commented out) ===== --%>
+     (its pagebreak before pop_incl_f3 is commented out). Wrapped in its
+     own <html> block exactly like pop_incl_f3.jsp: the Important Notice
+     include above closes its </html>, and content after a </html> with
+     no re-opening <html> is dropped by the PDF renderer - each legacy
+     pop_incl_f*.jsp therefore supplies its own wrapper. ===== --%>
 <% if (CLAUSE_PRINT.equals("Y") && vNARRATION.size() > 0) { %>
+<html>
 <table width="100%" border="1" cellspacing="0" cellpadding="3" wrap="off">
 	<tr>
 		<th bordercolor="#FFFFFF" width="100%" align="left" colspan="2"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">The following endorsements, warranties, clauses or extensions are not applicable unless indicated in the Policy Schedule, in which case the endorsement(s), warranty(ies) , clause(s) or extension(s)  so indicated shall be deemed to form part of the policy<br><i>Endorsemen, waranti, fasal atau tambahan adalah tidak digunapakai kecuali dinyatakan di dalam Jadual Polisi, di mana endorsemen, waranti, fasal atau tambahan yang dinyata akan dianggap membentuk sebahagian daripada polisi</i></font></th>
@@ -610,6 +615,7 @@
 	}
 %>
 </table>
+</html>
 <% } %>
 
 </body>
