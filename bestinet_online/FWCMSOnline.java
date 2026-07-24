@@ -1772,6 +1772,25 @@ public class FWCMSOnline extends DB_Contact{
 		rs.close();
 		pstmt.close();
 
+		/* Immigration address: TB_FWIGMAST only stores the branch name in
+		   IMMI_ADDRESS — look up the full address from TB_IMMAGRATION using
+		   the branch code held in IMMI_NAME. */
+		String immiName = nz((String)htFWIG.get("IMMI_NAME"));
+		if (!immiName.equals("")){
+			myQuery = "SELECT ADDRESS FROM TB_IMMAGRATION WHERE INSCODE='08' AND CODE=? WITH UR";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1, immiName);
+			rs = pstmt.executeQuery();
+			if (rs.next()){
+				String immiAddr = nz(rs.getString("ADDRESS"));
+				if (!immiAddr.equals("")){
+					htFWIG.put("IMMI_ADDRESS", immiAddr);
+				}
+			}
+			rs.close();
+			pstmt.close();
+		}
+
 		/* principal name (letterhead / guarantor) */
 		myQuery = "SELECT NAME FROM TB_MAINPRINCIPLE WHERE CODE=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
