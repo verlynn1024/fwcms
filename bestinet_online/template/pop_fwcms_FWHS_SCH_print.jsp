@@ -398,10 +398,10 @@
   </tr>
 <%	} else { %>
   <tr>
-  	<td <%if(!GST_RT.equals("")){%>rowspan="2"<%}%>bordercolor="#000000" width="27%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business or Occupation<br><i>Perniagaan atau Pekerjaan </i> <br><b><%= common.stringToHTMLString(OCCUPATION) %></b></font></td>
-    <td <%if(!GST_RT.equals("")){%>rowspan="2"<%}%>bordercolor="#000000" width="33%" ><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business Reg. No./ New/Old NRIC No. <br><i> No Pendaftaran Syarikat/ No KP Baru/Lama</i> <br><b><%= common.stringToHTMLString(BUSINESS_NO) %></b></font></td>
-    <td bordercolor="#000000" width="20%" <%if(GST_TRIGGER.equals("N")){%>rowspan="2" <%} %> valign="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString2(STAXPCT) %>% Service Tax<br><i><%= common.stringToHTMLString2(STAXPCT) %>% Cukai Perkhidmatan</i></font></td>
-    <td bordercolor="#000000" width="20%" <%if(GST_TRIGGER.equals("N")){%>rowspan="2" <%} %> valign="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(STAXAMT) %></b></font></td>
+  	<td <%if(!GST_RT.equals("") && !GST_TRIGGER.equals("N")){%>rowspan="2"<%}%>bordercolor="#000000" width="27%"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business or Occupation<br><i>Perniagaan atau Pekerjaan </i> <br><b><%= common.stringToHTMLString(OCCUPATION) %></b></font></td>
+    <td <%if(!GST_RT.equals("") && !GST_TRIGGER.equals("N")){%>rowspan="2"<%}%>bordercolor="#000000" width="33%" ><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Business Reg. No./ New/Old NRIC No. <br><i> No Pendaftaran Syarikat/ No KP Baru/Lama</i> <br><b><%= common.stringToHTMLString(BUSINESS_NO) %></b></font></td>
+    <td bordercolor="#000000" width="20%" valign="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><%= common.stringToHTMLString2(STAXPCT) %>% Service Tax<br><i><%= common.stringToHTMLString2(STAXPCT) %>% Cukai Perkhidmatan</i></font></td>
+    <td bordercolor="#000000" width="20%" valign="center"><font face="Verdana, Arial, Helvetica, sans-serif" size="2"><b>RM <%= common.stringToHTMLString(STAXAMT) %></b></font></td>
   </tr>
 <%	} %>
 <%	if (!GST_RT.equals("") && !GST_TRIGGER.equals("N")) { %>
@@ -412,7 +412,7 @@
 <%	} %>
 	<!-- STFee_FT_A5_DisplayStampFees --- Display Stamp Fees for PDF [StampFees_Flowchart_v1.0] -->
   <tr>
-    <td bordercolor="#000000" <%if(!GST_RT.equals("") && !GST_TRIGGER.equals("N")){%>rowspan="5" <%}else{%>rowspan="5"<%}if(showStampFees){%>rowspan="6" <%}%>colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / </font>
+    <td bordercolor="#000000" <%if(showStampFees){%>rowspan="6"<%}else{%>rowspan="5"<%}%> colspan="2" valign="top"><font face="Verdana, Arial, Helvetica, sans-serif" size="2">Period of Insurance / </font>
     <font face="Verdana, Arial, Helvetica, sans-serif" size="2" border="0"><i>Tempoh Insurans</i><br>
 		(a)&nbsp;From <b><%= ISS_CNTIME1 %>&nbsp;<%= common.stringToHTMLString(EFFDATE)+" " %></b> to <b><%= common.stringToHTMLString(EXPDATE) %></b> (both dates inclusive)<br>
 	<i>&nbsp;&nbsp;&nbsp;Dari&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;sehingga&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;(termasuk kedua-dua tarikh)</i><br>
