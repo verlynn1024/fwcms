@@ -1737,7 +1737,7 @@ public class FWCMSOnline extends DB_Contact{
 		/* MAST keys on UKEY2 (not UKEY) — verified against inputXML
 		   (TB_FWIGMAST WHERE UKEY2=...). */
 		myQuery = "SELECT EMP_NAME,EMP_PASSPORT,EMP_NATIONALITY,EMP_GENDER,"+
-				  "EMP_AMOUNT,EMP_OCCUPATION,EMP_PREM,IMMI_NAME,IMMI_ADDRESS,IMMI_POSTCODE,"+
+				  "EMP_AMOUNT,EMP_OCCUPATION,EMP_PREM,IMMI_CODE,IMMI_NAME,IMMI_ADDRESS,IMMI_POSTCODE,"+
 				  "SUM_NATIONALITY,SUM_NOOFWORKER,SUM_AMOUNT,SUM_TOT_AMOUNT,TOT_AMOUNT "+
 				  "FROM TB_FWIGMAST WHERE UKEY2=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
@@ -1760,6 +1760,7 @@ public class FWCMSOnline extends DB_Contact{
 			htFWIG.put("EMP_GENDER",		EMP_GENDER);
 			htFWIG.put("EMP_AMOUNT",		EMP_AMOUNT);
 			htFWIG.put("EMP_PREM",			nz(rs.getString("EMP_PREM")));
+			htFWIG.put("IMMI_CODE",			nz(rs.getString("IMMI_CODE")));
 			htFWIG.put("IMMI_NAME",			nz(rs.getString("IMMI_NAME")));
 			htFWIG.put("IMMI_ADDRESS",		nz(rs.getString("IMMI_ADDRESS")));
 			htFWIG.put("IMMI_POSTCODE",		nz(rs.getString("IMMI_POSTCODE")));
@@ -1771,6 +1772,26 @@ public class FWCMSOnline extends DB_Contact{
 		}
 		rs.close();
 		pstmt.close();
+
+		/* Immigration address: TB_FWIGMAST only stores the branch name in
+		   IMMI_NAME — look up the full address from TB_IMMIGRATION using
+		   the branch code held in IMMI_CODE. */
+		String immiCode = nz((String)htFWIG.get("IMMI_CODE"));
+		if (!immiCode.equals("")){
+			myQuery = "SELECT ADDRESS FROM TB_IMMIGRATION WHERE INSCODE='08' AND CODE=? WITH UR";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1, immiCode);
+			rs = pstmt.executeQuery();
+			if (rs.next()){
+				String immiAddr = nz(rs.getString("ADDRESS"));
+				if (!immiAddr.equals("")){
+					immiAddr = immiAddr.replace("¶", "\n");
+					htFWIG.put("IMMI_ADDRESS", immiAddr);
+				}
+			}
+			rs.close();
+			pstmt.close();
+		}
 
 		/* principal name (letterhead / guarantor) */
 		myQuery = "SELECT NAME FROM TB_MAINPRINCIPLE WHERE CODE=? WITH UR";
