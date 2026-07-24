@@ -12,11 +12,16 @@
     immigration-branch dropdown, but persists nothing itself. When the agent
     ticks the declaration and clicks "Make Payment", the page POSTs here FIRST
     (an AJAX call), and only on this handler's "OK" does it redirect to the
-    payment page. So every database write the submission needs happens here,
-    BEFORE the payment gateway — mirroring the legacy eCover "Save cover note"
-    step, where the class-table insert precedes payment.
+    payment page. This endpoint persists the chosen immigration branch onto
+    the journey's TB_FWCMS_ONLINE tracking row BEFORE the payment gateway, so
+    the branch is available when the quotation is issued. Quotation issuance
+    itself (the FWCMS class-table insert + cover-note / CNCODE generation) NO
+    LONGER runs here — it now runs only AFTER a successful payment, on
+    pop_fwcms_payment_result.jsp, per the post-payment quotation requirement.
+    All the pre-payment TB_FWCMS_ONLINE / TB_FWCMS_ONLINE_* tracking writes
+    (enquiry, premium capture, worker snapshot) are unchanged.
 
-    Two things happen, in order:
+    One thing happens here:
 
       1. Immigration branch — when the Bestinet enquiry carried no immigration
          branch (blank / "N/A"), the worker-detail page shows a required
@@ -28,18 +33,10 @@
          FWIG main tables at issuance (the Guarantee Letter's addressee reads
          IMMI_DESCP / IMMI_ADDRESS from that row).
 
-      2. Main-table issuance — each product in the journey is inserted into
-         the existing FWCMS main / "class" tables via
-         FWCMSOnline.issueMainTables (this replaces the issuance that used to
-         run on pop_fwcms_payment.jsp):
-             FWIG: TB_TRANSACTION, TB_FWIGCN, TB_FWIGMAST, TB_FWIGSCH
-             FWHS: TB_TRANSACTION, TB_FWHSCN, TB_FWHSSCH, TB_FWHSITEM
-         The real cover note / policy number generated is stamped back onto the
-         online DTL row. The loop is idempotent (rows already issued with a
-         real, non-MCK cover note are skipped), so a retry never re-inserts. If
-         issuance throws (e.g. the cover-note series is not seeded in this
-         environment yet) the product falls back to a mock MCK- stamp so the
-         portal still renders.
+      (Quotation / main-table issuance — TB_TRANSACTION, TB_FWIGCN / TB_FWIGMAST
+       / TB_FWIGSCH, TB_FWHSCN / TB_FWHSSCH / TB_FWHSITEM and CNCODE generation
+       — has been MOVED to run only after a successful payment; it is now done
+       by pop_fwcms_payment_result.jsp via FWCMSOnline.issueMainTables.)
 
     Response body (plain text, read by the caller's AJAX handler):
         OK      — safe to proceed to the payment page
@@ -131,41 +128,14 @@
                 }
             }
 
-            /* ── 2. Main-table issuance (BEFORE the payment gateway) ────────
-               Insert each product into the existing FWCMS main tables via
-               FWCMSOnline.issueMainTables, which reuses the legacy DB_FWIG /
-               DB_FWHS DAOs, generates the real cover note / policy number and
-               stamps it back onto the online DTL row (idempotent). */
-            java.util.Hashtable htTXN = FWCMSOnline.getFWCMSONLINETRANS(FWCMS_UUID);
-            if (htTXN != null) {
-                String sMockIssDate = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.util.Date());
-                String sMockSuffix  = new java.text.SimpleDateFormat("yyMMddHHmmss").format(new java.util.Date());
-                java.util.ArrayList alDTL = FWCMSOnline.getFWCMSONLINEDTLList(FWCMS_UUID);
-                for (int iD = 0; iD < alDTL.size(); iD++) {
-                    java.util.Hashtable htDTL = (java.util.Hashtable) alDTL.get(iD);
-                    String sInsType = (String) htDTL.get("INSURANCE_TYPE");
-                    String sCNCODE  = common.setNullToString((String) htDTL.get("CNCODE"));
-                    boolean alreadyIssued = "ISSUED".equals((String) htDTL.get("INS_STATUS"))
-                        && !sCNCODE.equals("") && !sCNCODE.startsWith("MCK");
-                    if (alreadyIssued) continue;
-
-                    try {
-                        String sResult = FWCMSOnline.issueMainTables(FWCMS_UUID, sInsType, SESUSERID);
-                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
-                            + " stage=pre-payment-main-table-issuance INSTYPE=" + sInsType
-                            + " issued CN/POLNO=" + sResult);
-                    } catch (Exception exIssue) {
-                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
-                            + " stage=pre-payment-main-table-issuance INSTYPE=" + sInsType
-                            + " FAILED - falling back to mock stamp: " + exIssue.getMessage());
-                        exIssue.printStackTrace();
-                        FWCMSOnline.updateFWCMSONLINEDTLIssued(
-                            "MCK" + sInsType + sMockSuffix,          /* mock CNCODE    */
-                            "MCKPOL" + sInsType + sMockSuffix,       /* mock POLICY_NO */
-                            sMockIssDate, SESUSERID, FWCMS_UUID, sInsType);
-                    }
-                }
-            }
+            /* ── 2. Quotation / main-table issuance — MOVED to post-payment ──
+               The FWCMS class-table insert and cover-note (CNCODE) generation
+               are no longer performed here. They now run only after a
+               successful payment, on pop_fwcms_payment_result.jsp, which calls
+               FWCMSOnline.issueMainTables per product. The immigration branch
+               stamped above is persisted on the TB_FWCMS_ONLINE tracking row
+               and is read back at that point, so the branch still flows into
+               the FWIG main tables when the quotation is finally issued. */
         } catch (Exception ex) {
             System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID + " stage=worker-detail-rep FAILED");
             ex.printStackTrace();

@@ -40,22 +40,27 @@ System.out.println(_sb.toString());
        state is read by the printing pipeline). */
     String FWCMS_UUID = common.setNullToString((String)session.getAttribute("SES_FWCMS_ONLINE_UUID"));
 
-    /* ── [MOCK] Payment leg only — issuance already done pre-payment ──
-       Issuance (the class-table insert) now happens BEFORE the payment
-       gateway, in pop_fwcms_worker_detail_rep.jsp (the data-handling endpoint
-       the worker-detail page POSTs to on "Make Payment"): each product is
-       inserted into the existing FWCMS main tables via
-       FWCMSOnline.issueMainTables there, so by the time this page runs every
-       product already carries its real
-       cover note / policy number (or an MCK- mock stamp if the CN series was
-       not seeded). This page no longer inserts anything into the class
-       tables — it only handles the two post-gateway legs:
+    /* ── Post-payment legs — PAID stamp, QUOTATION ISSUANCE, journey close ──
+       Quotation issuance (the FWCMS class-table insert + cover-note / CNCODE
+       generation) now happens HERE, only after the payment is confirmed
+       successful — it no longer runs before the gateway. The pre-payment
+       endpoint pop_fwcms_worker_detail_rep.jsp keeps every TB_FWCMS_ONLINE /
+       TB_FWCMS_ONLINE_* tracking write (enquiry, premium capture, worker
+       snapshot, chosen immigration branch) exactly as before; only the
+       quotation generation moved to this page. On PAYMENT success this page
+       handles three legs, in order:
 
          1. payment  — [MOCK] journey stamped PAID with a MOCKPAY- ref
                        (updateFWCMSONLINETRANSPayment); the real gateway
                        callback will supply the true payment reference
-         2. status   — journey closed TRANS_STATUS='S' / PURCHASE_STATUS=
-                       'ISSUED' once the payment is confirmed
+         2. issuance — each product inserted into the FWCMS main tables
+                       (TB_TRANSACTION, TB_FWIGCN/MAST/SCH, TB_FWHSCN/SCH/ITEM)
+                       and its real CNCODE generated, via
+                       FWCMSOnline.issueMainTables (reusing DB_FWIG / DB_FWHS);
+                       the generated CNCODE is stamped back onto the online DTL
+                       row. Idempotent — a reload never re-issues or re-numbers
+         3. status   — journey closed TRANS_STATUS='S' / PURCHASE_STATUS=
+                       'ISSUED' once the products exist and payment is confirmed
                        (updateFWCMSONLINETRANSStatus)
 
        EVERY FWCMS document — the FWIG Guarantee Letter included — renders
@@ -64,9 +69,9 @@ System.out.println(_sb.toString());
        exactly like the legacy eCover previews; the online DTL row supplies
        only the UUID -> CNCODE linkage. So a product left on the MCK- mock
        fallback has NO class-table rows and will NOT print — real main-table
-       issuance (done on the payment page) is a hard prerequisite for the
+       issuance (done above, on payment success) is a hard prerequisite for the
        print buttons below. PAYMENT=F still previews the failed state without
-       stamping anything.
+       issuing or stamping anything.
        [REMOVE when the payment gateway callback lands: restore
        isSuccess = "Y".equalsIgnoreCase(request.getParameter("PAYMENT"))
        and let the gateway callback supply the payment stamp. The MOCKPAY-
@@ -89,14 +94,53 @@ System.out.println(_sb.toString());
                     SESUSERID, FWCMS_UUID);
             }
 
-            /* Issuance into the FWCMS main tables already ran pre-payment on
-               pop_fwcms_payment.jsp, so here we only close the journey: once
-               the products exist and the payment is confirmed, stamp the
-               journey Success/ISSUED. */
+            /* ── Quotation / main-table issuance — AFTER successful payment ──
+               Now that the payment is confirmed, issue each product of the
+               journey into the FWCMS MAIN / "class" tables and generate its
+               real cover-note number (CNCODE). FWCMSOnline.issueMainTables
+               reuses the legacy DB_FWIG / DB_FWHS DAOs (no SQL duplicated):
+               it drives the class-table inserts in one transaction and stamps
+               the generated CNCODE back onto the online DTL row. The loop is
+               idempotent — a product already issued with a real (non-MCK)
+               cover note is skipped — so a reload after payment never
+               re-issues or re-numbers. If issuance throws (e.g. the cover-note
+               series is not seeded in this environment) the product falls back
+               to a mock MCK- stamp so the portal still renders. */
             if (htTXN != null)
             {
+                String sMockIssDate = new java.text.SimpleDateFormat("yyyyMMdd").format(new java.util.Date());
+                String sMockSuffix  = new java.text.SimpleDateFormat("yyMMddHHmmss").format(new java.util.Date());
                 java.util.ArrayList alDTL = FWCMSOnline.getFWCMSONLINEDTLList(FWCMS_UUID);
-                boolean allIssued = alDTL.size() > 0;
+                for (int iD = 0; iD < alDTL.size(); iD++)
+                {
+                    java.util.Hashtable htDTL = (java.util.Hashtable) alDTL.get(iD);
+                    String sInsType = (String) htDTL.get("INSURANCE_TYPE");
+                    String sCNCODE  = common.setNullToString((String) htDTL.get("CNCODE"));
+                    boolean alreadyIssued = "ISSUED".equals((String) htDTL.get("INS_STATUS"))
+                        && !sCNCODE.equals("") && !sCNCODE.startsWith("MCK");
+                    if (alreadyIssued) continue;
+
+                    try {
+                        String sResult = FWCMSOnline.issueMainTables(FWCMS_UUID, sInsType, SESUSERID);
+                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
+                            + " stage=post-payment-main-table-issuance INSTYPE=" + sInsType
+                            + " issued CN/POLNO=" + sResult);
+                    } catch (Exception exIssue) {
+                        System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
+                            + " stage=post-payment-main-table-issuance INSTYPE=" + sInsType
+                            + " FAILED - falling back to mock stamp: " + exIssue.getMessage());
+                        exIssue.printStackTrace();
+                        FWCMSOnline.updateFWCMSONLINEDTLIssued(
+                            "MCK" + sInsType + sMockSuffix,          /* mock CNCODE    */
+                            "MCKPOL" + sInsType + sMockSuffix,       /* mock POLICY_NO */
+                            sMockIssDate, SESUSERID, FWCMS_UUID, sInsType);
+                    }
+                }
+
+                /* Close the journey: once the products exist (issued above) and
+                   the payment is confirmed, stamp the journey Success/ISSUED. */
+                java.util.ArrayList alDTLDone = FWCMSOnline.getFWCMSONLINEDTLList(FWCMS_UUID);
+                boolean allIssued = alDTLDone.size() > 0;
                 if (allIssued && !"S".equals((String)htTXN.get("TRANS_STATUS")))
                 {
                     FWCMSOnline.updateFWCMSONLINETRANSStatus("S", "ISSUED", SESUSERID, FWCMS_UUID);
