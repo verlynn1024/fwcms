@@ -1091,6 +1091,138 @@ public class FWCMSOnline extends DB_Contact{
 		return Math.round((dAmount / dBase) * 100.0 * 100.0) / 100.0;
 	}
 
+	/* ---------------------------------------------------------------
+	   CLIENTID (TB_TRANSACTION) — the numeric TB_CONTACT.AUTONUM of the
+	   client the cover note belongs to.
+
+	   The eCover enquiry screens join the two tables directly:
+
+	       FROM TB_CLSCAT, TB_TRANSACTION, TB_CONTACT
+	       WHERE TB_CONTACT.AUTONUM = TB_TRANSACTION.CLIENTID ...
+
+	   AUTONUM is numeric and CLIENTID is a character column, so DB2
+	   implicitly casts CLIENTID to DECFLOAT to evaluate that predicate.
+	   A blank / non-numeric CLIENTID therefore does not merely fail to
+	   join — it aborts the whole enquiry with SQLCODE -420 ("Invalid
+	   character found in a character string argument of the function
+	   DECFLOAT"), so one portal-issued row breaks Client Profile for
+	   that agent. The portal must never write a non-numeric CLIENTID.
+
+	   The journey's client is the employer (BUSINESS_NO /
+	   EMPLOYER_NAME): reuse that agent's existing TB_CONTACT row when
+	   there is one, otherwise create it, so an issued quotation appears
+	   under the right client. If the contact cannot be resolved at all
+	   the value degrades to "0" — still numeric, so the enquiry keeps
+	   running; that row just does not join to a client.
+
+	   Runs on this bean's own connection (opened by the caller), never
+	   on the DB_FWIG / DB_FWHS class-table transaction, and never throws
+	   — resolving a client must not roll back an issuance that the
+	   customer has already paid for. */
+	private String resolveClientId(Hashtable htTXN, String USERID){
+
+		String BUSINESS_NO   = nz((String)htTXN.get("BUSINESS_NO"));
+		String EMPLOYER_NAME = nz((String)htTXN.get("EMPLOYER_NAME"));
+
+		try{
+			long lAutonum = findContact(BUSINESS_NO, EMPLOYER_NAME, USERID);
+			if (lAutonum <= 0) lAutonum = createContact(htTXN, USERID);
+			if (lAutonum > 0) return String.valueOf(lAutonum);
+		}
+		catch (Exception ex){
+			System.out.println("[FWCMSPRINT] resolveClientId FAILED BUSINESS_NO=" + BUSINESS_NO
+				+ " USERID=" + USERID + " - writing CLIENTID 0: " + ex.getMessage());
+		}
+		return "0";
+	}
+
+	/* Existing client row for this employer: business registration number
+	   first (the identifier the FWCMS journey is keyed on), name second.
+	   0 when there is none. */
+	private long findContact(String BUSINESS_NO, String NAME, String USERID) throws Exception{
+
+		long lAutonum = 0;
+
+		if (!BUSINESS_NO.equals("")){
+			lAutonum = selectContact("BUSINESS_NO=? AND USERID=?", BUSINESS_NO, USERID);
+			if (lAutonum <= 0) lAutonum = selectContact("BUSINESS_NO=?", BUSINESS_NO, null);
+		}
+		if (lAutonum <= 0 && !NAME.equals("")){
+			lAutonum = selectContact("NAME=? AND USERID=?", NAME, USERID);
+		}
+		return lAutonum;
+	}
+
+	private long selectContact(String sWhere, String sParam1, String sParam2) throws Exception{
+
+		long lAutonum = 0;
+		String myQuery = "SELECT AUTONUM FROM TB_CONTACT WHERE " + sWhere +
+						 " ORDER BY AUTONUM FETCH FIRST 1 ROWS ONLY WITH UR";
+
+		PreparedStatement ps = myConn.prepareStatement(myQuery);
+		ps.setString(1, sParam1);
+		if (sParam2 != null) ps.setString(2, sParam2);
+		ResultSet rs = ps.executeQuery();
+		if (rs.next()) lAutonum = rs.getLong("AUTONUM");
+		rs.close();
+		ps.close();
+
+		return lAutonum;
+	}
+
+	/* Create the client row for this employer through the SAME insert the
+	   eCover "Add Client" screen uses: FWCMSOnline extends DB_Contact, so
+	   DB_Contact.insert_contact is inherited — no TB_CONTACT insert SQL is
+	   duplicated here and AUTONUM stays the table's IDENTITY key
+	   (insert_contact reads it back with IDENTITY_VAL_LOCAL). It returns
+	   "<AUTONUM> <NAME>"; getKey takes the key off the front.
+
+	   Column values follow what the class-table CN rows already carry for
+	   the same employer (CONTACT_TYPE 'C' = company, IS_CLIENT 'Y',
+	   DELETED 'N'). NATURE_OF_BUSS is VARCHAR(4), so the journey's nature
+	   code is only carried when it fits; the description always goes into
+	   TRADE. */
+	private long createContact(Hashtable htTXN, String USERID) throws Exception{
+
+		String BUSINESS_NO = nz((String)htTXN.get("BUSINESS_NO"));
+		String NAME        = nz((String)htTXN.get("EMPLOYER_NAME"));
+		if (NAME.equals("")) NAME = BUSINESS_NO;
+		if (NAME.equals("")) return 0;
+
+		String NATURE_CODE = nz((String)htTXN.get("NATURE_BUSINESS"));
+		if (NATURE_CODE.length() > 4) NATURE_CODE = "";
+
+		String sResult = insert_contact(
+			USERID, "C", "Y", "", "",                            /* USERID, CONTACT_TYPE, IS_CLIENT, NEW_IC_NO, OLD_IC_NO */
+			BUSINESS_NO, "", "", "", "",                         /* BUSINESS_NO, DOB, GENDER, BODY_CORP, MARITAL_STATUS  */
+			NAME,
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_1")),
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_2")),
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_3")),
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_4")),
+			nz((String)htTXN.get("EMPLOYER_POSTCODE")),
+			"", "",                                              /* OCCUPATION_CODE, OCCUPATION_DESC */
+			nz((String)htTXN.get("NATURE_BUSINESS_DESCP")),      /* TRADE            */
+			"",                                                  /* TEL_NO_HOME      */
+			nz((String)htTXN.get("EMPLOYER_PHONE")),             /* TEL_NO_OFFICE    */
+			"", "", "",                                          /* FAX_HOME, FAX_OFFICE, MOBILE_NO */
+			nz((String)htTXN.get("EMPLOYER_EMAIL")),
+			"", "", "",                                          /* COMMENTS, REFERRED_BY, CONTACT_STATUS */
+			now(), "N",                                          /* DATE_CREATED, DELETED */
+			"", "", "",                                          /* SALUTATION, NATIONALITY, RACE */
+			nz((String)htTXN.get("EMPLOYER_STATE")),
+			comm.getKey(nz((String)htTXN.get("ACCODE")), " "),   /* ACCODE           */
+			"", "",                                              /* VERIFY, AGE      */
+			"", NATURE_CODE);                                    /* EMPLOYER_NAME, NATURE_OF_BUSS */
+
+		try{
+			return Long.parseLong(comm.getKey(nz(sResult), " ").trim());
+		}
+		catch (NumberFormatException nfe){
+			return 0;
+		}
+	}
+
 	/* FWIG — TB_TRANSACTION, TB_FWIGCN, TB_FWIGMAST, TB_FWIGSCH via the
 	   legacy DB_FWIG bean (same methods, same tables as the eCover save:
 	   integration doc section 3). Returns the new UKEY. */
@@ -1117,6 +1249,11 @@ public class FWCMSOnline extends DB_Contact{
 		String FWCMSREF = (String)htDTL.get("BTN_TRANS_REF");
 		if (FWCMSREF.equals("")) FWCMSREF = (String)htDTL.get("REFNO");
 
+		/* client (TB_CONTACT.AUTONUM) for TB_TRANSACTION.CLIENTID —
+		   resolved before the class-table transaction opens, on this
+		   bean's connection; always numeric (see resolveClientId) */
+		String CLIENTID = resolveClientId(htTXN, USERID);
+
 		String sUKEY = "";
 		try{
 			dbFWIG.makeConnection();
@@ -1139,7 +1276,7 @@ public class FWCMSOnline extends DB_Contact{
 			String UWYR_MTH = vUWYR.size() > 1 ? (String)vUWYR.elementAt(1) : "";
 
 			/* 1. TB_TRANSACTION — class IG, type CN, CNSTATUS='SAVED' */
-			dbFWIG.insert_transaction("IG", "CN", USERID, NOW14, "", "N",
+			dbFWIG.insert_transaction("IG", "CN", USERID, NOW14, CLIENTID, "N",
 				PRINCIPLE, ACCODE, ISSDATE, "", dNETPREM, CNCODE, "", "", "");
 
 			/* 2. TB_FWIGCN — cover-note header + employer block (G1 journey
@@ -1153,7 +1290,7 @@ public class FWCMSOnline extends DB_Contact{
 				"", (String)htTXN.get("NATURE_BUSINESS_DESCP"),
 				"", "", (String)htTXN.get("EMPLOYER_PHONE"), "", (String)htTXN.get("EMPLOYER_EMAIL"), "", "",
 				(String)htTXN.get("BUSINESS_NO"), "", "C", "", "SAVED", "", "", "", dNETPREM, "",
-				"", "", "", "N", "", "", "", "",
+				"", "", CLIENTID, "N", "", "", "", "",       /* CANCELDATE, SUBMISSIONNO, CONTACTID, DELETED */
 				UWYR_YR, UWYR_MTH, "", "", "IG", "", "");
 
 			/* 3. TB_FWIGMAST — ^-delimited worker lists + per-nationality
@@ -1268,6 +1405,11 @@ public class FWCMSOnline extends DB_Contact{
 			if (!sIGKey.equals("") && !sIGKey.startsWith("MCK")) IG_NO = sIGKey;
 		}
 
+		/* client (TB_CONTACT.AUTONUM) for TB_TRANSACTION.CLIENTID —
+		   resolved before the class-table transaction opens, on this
+		   bean's connection; always numeric (see resolveClientId) */
+		String CLIENTID = resolveClientId(htTXN, USERID);
+
 		String sUKEY = "";
 		try{
 			dbFWHS.makeConnection();
@@ -1285,7 +1427,7 @@ public class FWCMSOnline extends DB_Contact{
 			String UWYR_MTH = vUWYR.size() > 1 ? (String)vUWYR.elementAt(1) : "";
 
 			/* 1. TB_TRANSACTION — class FWHS, type CN, status SAVED */
-			dbFWHS.insert_transaction("FWHS", "CN", USERID, NOW14, "", "N",
+			dbFWHS.insert_transaction("FWHS", "CN", USERID, NOW14, CLIENTID, "N",
 				PRINCIPLE, ACCODE, ISSDATE, "", dNETPREM, CNCODE, "", "", "", "SAVED");
 
 			/* 2. TB_FWHSCN — cover-note header + employer block */
@@ -1298,7 +1440,7 @@ public class FWCMSOnline extends DB_Contact{
 				"", (String)htTXN.get("NATURE_BUSINESS_DESCP"),
 				"", "", (String)htTXN.get("EMPLOYER_PHONE"), "", (String)htTXN.get("EMPLOYER_EMAIL"), "", "",
 				(String)htTXN.get("BUSINESS_NO"), "", "C", "SAVED", "", "", "", dNETPREM, "",
-				"", "", "", "N", "", "", "", "",
+				"", "", CLIENTID, "N", "", "", "", "",       /* CANCELDATE, SUBMISSIONNO, CONTACTID, DELETED */
 				UWYR_YR, UWYR_MTH, "", "FWHS", "",
 				(String)htTXN.get("NATURE_BUSINESS"), "", "", IG_NO);
 
