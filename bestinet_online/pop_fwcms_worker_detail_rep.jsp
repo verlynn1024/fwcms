@@ -36,7 +36,7 @@
       (Quotation / main-table issuance — TB_TRANSACTION, TB_FWIGCN / TB_FWIGMAST
        / TB_FWIGSCH, TB_FWHSCN / TB_FWHSSCH / TB_FWHSITEM and CNCODE generation
        — has been MOVED to run only after a successful payment; it is now done
-       by pop_fwcms_payment_result.jsp via FWCMSOnline.issueMainTables.)
+       by pop_fwcms_issue_quotation.jsp, included by pop_fwcms_payment_result.jsp.)
 
     Response body (plain text, read by the caller's AJAX handler):
         OK      — safe to proceed to the payment page
@@ -131,8 +131,9 @@
             /* ── 2. Quotation / main-table issuance — MOVED to post-payment ──
                The FWCMS class-table insert and cover-note (CNCODE) generation
                are no longer performed here. They now run only after a
-               successful payment, on pop_fwcms_payment_result.jsp, which calls
-               FWCMSOnline.issueMainTables per product. The immigration branch
+               successful payment, in pop_fwcms_issue_quotation.jsp (included by
+               pop_fwcms_payment_result.jsp), which drives DB_FWIG / DB_FWHS
+               directly per product. The immigration branch
                stamped above is persisted on the TB_FWCMS_ONLINE tracking row
                and is read back at that point, so the branch still flows into
                the FWIG main tables when the quotation is finally issued. */
