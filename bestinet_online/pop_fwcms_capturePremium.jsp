@@ -148,6 +148,22 @@
                             "FWIG", fwigNat, fwigFrom, fwigTo, String.valueOf(fwigCount),
                             common.fnGetValue2((float) dSumIns), common.fnGetValue2((float) dGross), "0.00" });
                 }
+                /* Snapshot the FWIG worker particulars into
+                   TB_FWCMS_ONLINE_WORKER so the Guarantee Letter's EMPLOYEES
+                   PARTICULARS LISTING (page 2) prints from the database — the
+                   printing module reads the workers here, never from session.
+                   table_vTable_EMPLOYEE layout (built by check_fwcms_online.jsp):
+                   [2]=name [3]=nationality code [4]=gender [5]=passport
+                   [7]=IG amount (sum insured) [8]=gross premium. The
+                   nationality description is resolved at print time by
+                   FWCMSOnline.getFWIGGLPrintDataOnline. Each row also carries
+                   its policy (POLICY_ID) and its sequence inside that policy.
+                   Re-run safe: the existing rows for this journey/type are
+                   cleared first — and that clearing must happen BEFORE the
+                   policies are reconciled, since the workers hold the foreign
+                   key that would block deleting a policy. */
+                FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "I");
+
                 /* Own try/catch: the policy level is additive tracking and must
                    never cost the premium snapshot below — an environment where
                    TB_FWCMS_ONLINE_POLICY has not been created yet simply keeps
@@ -159,21 +175,9 @@
                 } catch (Exception ePolicy) {
                     ePolicy.printStackTrace();
                 }
-                String fwigPolicyRef = common.setNullToString((String) mFwigPolicies.get("FWIG"));
-
-                /* Snapshot the FWIG worker particulars into
-                   TB_FWCMS_ONLINE_WORKER so the Guarantee Letter's EMPLOYEES
-                   PARTICULARS LISTING (page 2) prints from the database — the
-                   printing module reads the workers here, never from session.
-                   table_vTable_EMPLOYEE layout (built by check_fwcms_online.jsp):
-                   [2]=name [3]=nationality code [4]=gender [5]=passport
-                   [7]=IG amount (sum insured) [8]=gross premium. The
-                   nationality description is resolved at print time by
-                   FWCMSOnline.getFWIGGLPrintDataOnline. Each row also carries
-                   its policy reference and its sequence inside that policy.
-                   Re-run safe: the existing rows for this journey/type are
-                   cleared first. */
-                FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "I");
+                /* [0]=POLICY_ID (the worker foreign key) [1]=POLICY_REF */
+                String[] fwigPolicy = (String[]) mFwigPolicies.get("FWIG");
+                long fwigPolicyId   = (fwigPolicy == null) ? 0 : (long) common.formatdouble(fwigPolicy[0]);
                 if (vFwigWorkers != null) {
                     int workerSeq = 0;
                     for (int i = 0; i < vFwigWorkers.size(); i++) {
@@ -190,7 +194,7 @@
                                 common.setNullToString((String) vItem.elementAt(7)),  // IG amount
                                 common.setNullToString((String) vItem.elementAt(8)),  // premium
                                 SESUSERID,
-                                fwigPolicyRef, workerSeq);                            // Q00001-001
+                                fwigPolicyId, workerSeq);                             // -> Q00001-001
                     }
                 }
             } catch (Exception e) {
@@ -340,6 +344,19 @@
                             common.fnGetValue2(((Double) vG.elementAt(5)).doubleValue()),
                             common.fnGetValue2(((Double) vG.elementAt(6)).doubleValue()) });
                 }
+                /* Snapshot the FWHS worker particulars into TB_FWCMS_ONLINE_WORKER
+                   (mirrors the FWIG block above) so that (1) the printing module
+                   reads the workers DB-first, and (2) issuance can populate
+                   TB_FWHSITEM from the database at payment time instead of from
+                   session. table_vTable_FWHS_ITM layout (check_fwcms_online.jsp):
+                   [2]=name [5]=gender [6]=passport [7]=nationality
+                   [9]=sum insured [10]=premium. Each row also carries its policy
+                   (POLICY_ID) and its sequence inside that policy. Re-run safe:
+                   existing rows are cleared first — before the policies are
+                   reconciled, since the workers hold the foreign key that would
+                   block deleting a policy. */
+                FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "H");
+
                 /* Additive, like the FWIG block: a failure here must not cost
                    the worker snapshot below. */
                 LinkedHashMap mFwhsPolicies = new LinkedHashMap();
@@ -348,17 +365,6 @@
                 } catch (Exception ePolicy) {
                     ePolicy.printStackTrace();
                 }
-
-                /* Snapshot the FWHS worker particulars into TB_FWCMS_ONLINE_WORKER
-                   (mirrors the FWIG block above) so that (1) the printing module
-                   reads the workers DB-first, and (2) issuance can populate
-                   TB_FWHSITEM from the database at payment time instead of from
-                   session. table_vTable_FWHS_ITM layout (check_fwcms_online.jsp):
-                   [2]=name [5]=gender [6]=passport [7]=nationality
-                   [9]=sum insured [10]=premium. Each row also carries its policy
-                   reference and its sequence inside that policy. Re-run safe:
-                   existing rows for this journey/type are cleared first. */
-                FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "H");
                 if (vFwhsWorkers != null) {
                     int workerSeq = 0;
                     HashMap mPolicySeq = new HashMap();   // policy key -> workers stamped so far
@@ -367,12 +373,14 @@
                         if (vItem == null || vItem.size() <= 10) continue;
                         workerSeq++;
 
-                        /* the worker's own reference: its policy's number plus
-                           its sequence WITHIN that policy, not within the product */
-                        String sKey       = (String) vFwhsKeys.elementAt(i);
-                        String sPolicyRef = common.setNullToString((String) mFwhsPolicies.get(sKey));
-                        Integer iSeq      = (Integer) mPolicySeq.get(sKey);
-                        int     policySeq = (iSeq == null) ? 1 : iSeq.intValue() + 1;
+                        /* the worker's own reference: its policy (foreign key)
+                           plus its sequence WITHIN that policy, not within the
+                           product — [0]=POLICY_ID [1]=POLICY_REF */
+                        String   sKey      = (String) vFwhsKeys.elementAt(i);
+                        String[] sPolicy   = (String[]) mFwhsPolicies.get(sKey);
+                        long     policyId  = (sPolicy == null) ? 0 : (long) common.formatdouble(sPolicy[0]);
+                        Integer iSeq       = (Integer) mPolicySeq.get(sKey);
+                        int     policySeq  = (iSeq == null) ? 1 : iSeq.intValue() + 1;
                         mPolicySeq.put(sKey, Integer.valueOf(policySeq));
 
                         FWCMSOnline.insertFWCMSONLINEWORKER(
@@ -385,7 +393,7 @@
                                 common.setNullToString((String) vItem.elementAt(9)),   // sum insured
                                 common.setNullToString((String) vItem.elementAt(10)),  // premium
                                 SESUSERID,
-                                sPolicyRef, policySeq);                                // Q00001-001
+                                policyId, policySeq);                                  // -> Q00001-001
                     }
                 }
             } catch (Exception e) {
