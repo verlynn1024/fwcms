@@ -81,7 +81,63 @@ Cover-note number: `getREFNO(PRINCIPLE, ACCODE, CLS)` — increments a
 `TB_GUARANTOR`, `TB_FWSEARCH`, `TB_GST_CN`, `TB_CNPRINT`, `TB_CONTACT`,
 `TB_NMOCCUPATION`, `TB_FWIGPREM`. The portal path populates the core policy set
 (transaction + CN + MAST/SCH + ITEM); the guarantor / search / e-invoice tables
-are optional legacy add-ons and are not required for printing or enquiry.
+are optional legacy add-ons and are not required for printing.
+
+`TB_CONTACT` is **not** optional: `TB_TRANSACTION.CLIENTID` must carry a valid
+numeric `TB_CONTACT.AUTONUM` — see §4.1.
+
+### 4.1 `TB_TRANSACTION.CLIENTID` must be numeric (Client Profile / DB2 -420)
+
+The eCover enquiry screens (`clientProfile.jsp`) join the client to the
+transaction directly:
+
+```sql
+FROM TB_CLSCAT, TB_TRANSACTION, TB_CONTACT
+WHERE TB_CONTACT.AUTONUM = TB_TRANSACTION.CLIENTID ...
+```
+
+`AUTONUM` is numeric and `CLIENTID` is a character column, so DB2 **implicitly
+casts `CLIENTID` to `DECFLOAT`** to evaluate that predicate. A blank or
+non-numeric `CLIENTID` therefore does not merely fail to join — the cast fails
+and the entire query aborts with:
+
+```
+SQLCODE=-420, SQLSTATE=22018
+Invalid character found in a character string argument of the function "DECFLOAT".
+```
+
+One portal-issued row with `CLIENTID=''` is enough to break Client Profile for
+every quotation belonging to that agent (the enquiry is filtered by
+`TB_TRANSACTION.USERID`). The same applies to the enquiry's
+`SELECT NAME FROM TB_CONTACT WHERE AUTONUM=<CLIENTID>` follow-up read.
+
+Issuance therefore resolves the journey's employer to a client row before the
+class-table transaction opens (`FWCMSOnline.resolveClientId`):
+
+1. reuse the agent's existing `TB_CONTACT` row — `BUSINESS_NO` + `USERID`, then
+   `BUSINESS_NO`, then `EMPLOYER_NAME` + `USERID`;
+2. otherwise create it (`NAME`, `BUSINESS_NO`, `USERID`) — generated `AUTONUM`
+   first, explicit `MAX(AUTONUM)+1` where the key is a plain numeric column;
+3. on any failure, fall back to `"0"` — still numeric, so the enquiry keeps
+   running; that row simply does not join to a client.
+
+The lookup runs on the `FWCMSOnline` connection, not on the `DB_FWIG` /
+`DB_FWHS` class-table transaction, and never throws: resolving a client must
+never roll back an issuance the customer has already paid for.
+
+**Rows already written with a blank `CLIENTID`** (issued before this fix) keep
+breaking the enquiry until they are repaired, e.g.:
+
+```sql
+UPDATE TB_TRANSACTION SET CLIENTID='0'
+ WHERE CLASS IN ('IG','FWHS')
+   AND (CLIENTID IS NULL
+        OR TRIM(CLIENTID) = ''
+        OR TRANSLATE(TRIM(CLIENTID),'','0123456789') <> '');
+```
+
+(`'0'` only stops the -420; to make those quotations visible again they must be
+re-pointed at the real `TB_CONTACT.AUTONUM` of their employer.)
 
 ## 4. Column contract (how the target columns were verified)
 
@@ -156,10 +212,12 @@ public String issueMainTables(String UUID, String INSTYPE, String USERID)
 1. loads the journey from the online tables (`getFWCMSONLINETRANS`,
    `getFWCMSONLINEDTL`, `getFWCMSONLINEWORKERList`);
 2. skips rows already issued with a real (non-`MCK`) cover note (idempotent);
-3. delegates the class-table inserts to `issueFWIG(...)` / `issueFWHS(...)`,
+3. resolves the employer to a `TB_CONTACT.AUTONUM` for `TB_TRANSACTION.CLIENTID`
+   (`resolveClientId`, §4.1 — always numeric);
+4. delegates the class-table inserts to `issueFWIG(...)` / `issueFWHS(...)`,
    which drive the `DB_FWIG` / `DB_FWHS` beans through the sequence in §3 inside
    a single `setAutoCommitOff → … → conCommit` transaction (`rollBack` on error);
-4. stamps the generated `CNCODE` / `POLNO` back onto the online DTL row via
+5. stamps the generated `CNCODE` / `POLNO` back onto the online DTL row via
    `updateFWCMSONLINEDTLIssued`, preserving the `UUID` linkage.
 
 ### Pre-gateway endpoint: `pop_fwcms_worker_detail_rep.jsp` (tracking only)
