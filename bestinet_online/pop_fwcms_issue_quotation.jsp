@@ -113,7 +113,8 @@
          FWIG.java (DB_FWIG): the same methods and tables as the legacy
          eCover save (integration doc section 3). Returns the new UKEY. ── */
     private String iqIssueFWIG(DB_FWIG dbFWIG, common comm, Hashtable htTXN,
-                               Hashtable htDTL, ArrayList alWorkers, String USERID) throws Exception{
+                               Hashtable htDTL, ArrayList alWorkers, String USERID,
+                               String CLIENTID) throws Exception{
 
         String PRINCIPLE = FWCMSOnline.GL_PRINCIPLE_CODE;
         String ACCODE    = comm.getKey((String) htTXN.get("ACCODE"), " ");
@@ -162,8 +163,14 @@
             String UWYR_YR  = vUWYR.size() > 0 ? (String) vUWYR.elementAt(0) : "";
             String UWYR_MTH = vUWYR.size() > 1 ? (String) vUWYR.elementAt(1) : "";
 
-            /* 1. TB_TRANSACTION — class IG, type CN, CNSTATUS='SAVED' */
-            dbFWIG.insert_transaction("IG", "CN", USERID, NOW14, "", "N",
+            /* 1. TB_TRANSACTION — class IG, type CN, CNSTATUS='SAVED'.
+                  CLIENTID must be a numeric TB_CONTACT.AUTONUM: the legacy
+                  Client Profile enquiry joins TB_CONTACT.AUTONUM (INTEGER) to
+                  TB_TRANSACTION.CLIENTID (VARCHAR), so a blank CLIENTID makes
+                  DB2 cast "" to DECFLOAT and the whole dashboard fails with
+                  SQLCODE=-420 / SQLSTATE=22018. Resolved by the caller through
+                  FWCMSOnline.resolveClientId (never blank, never throws). */
+            dbFWIG.insert_transaction("IG", "CN", USERID, NOW14, CLIENTID, "N",
                 PRINCIPLE, ACCODE, ISSDATE, "", dNETPREM, CNCODE, "", "", "");
 
             /* 2. TB_FWIGCN — cover-note header + employer block (G1 journey
@@ -262,7 +269,7 @@
          the journey's issued FWIG cover note. Returns the new UKEY. ── */
     private String iqIssueFWHS(DB_FWHS dbFWHS, common comm, Hashtable htTXN,
                                Hashtable htDTL, ArrayList alWorkers, String USERID,
-                               String IG_NO) throws Exception{
+                               String IG_NO, String CLIENTID) throws Exception{
 
         String PRINCIPLE = FWCMSOnline.GL_PRINCIPLE_CODE;
         String ACCODE    = comm.getKey((String) htTXN.get("ACCODE"), " ");
@@ -305,8 +312,10 @@
             String UWYR_YR  = vUWYR.size() > 0 ? (String) vUWYR.elementAt(0) : "";
             String UWYR_MTH = vUWYR.size() > 1 ? (String) vUWYR.elementAt(1) : "";
 
-            /* 1. TB_TRANSACTION — class FWHS, type CN, status SAVED */
-            dbFWHS.insert_transaction("FWHS", "CN", USERID, NOW14, "", "N",
+            /* 1. TB_TRANSACTION — class FWHS, type CN, status SAVED.
+                  CLIENTID: numeric TB_CONTACT.AUTONUM, see iqIssueFWIG — a blank
+                  here is what made Client Profile fail with SQLCODE=-420. */
+            dbFWHS.insert_transaction("FWHS", "CN", USERID, NOW14, CLIENTID, "N",
                 PRINCIPLE, ACCODE, ISSDATE, "", dNETPREM, CNCODE, "", "", "", "SAVED");
 
             /* 2. TB_FWHSCN — cover-note header + employer block */
@@ -406,6 +415,20 @@
                 String sIssDate = iqFmtNow("yyyyMMdd");
                 String sSuffix  = iqFmtNow("yyMMddHHmmss");
 
+                /* Client (TB_CONTACT.AUTONUM) for TB_TRANSACTION.CLIENTID —
+                   resolved once for the journey (one employer per journey) on
+                   FWCMSOnline's own connection, before any DAO transaction is
+                   opened, so it can never roll back a paid-for issuance.
+                   resolveClientId reuses the agent's existing client row for
+                   this employer, creates it when there is none, and degrades to
+                   "0" rather than throwing; it is always numeric, which is what
+                   the legacy Client Profile enquiry requires (it joins
+                   TB_CONTACT.AUTONUM INTEGER = TB_TRANSACTION.CLIENTID VARCHAR,
+                   so a blank CLIENTID broke the page with SQLCODE=-420). */
+                String sCLIENTIDiq = FWCMSOnlineIQ.resolveClientId(htTXNiq, IQ_USERID);
+                System.out.println("[FWCMSPRINT] UUID=" + IQ_UUID
+                    + " stage=post-payment-quotation-issuance CLIENTID=" + sCLIENTIDiq);
+
                 /* ── issue every product's quotation into the main tables ── */
                 ArrayList alDTLiq = FWCMSOnlineIQ.getFWCMSONLINEDTLList(IQ_UUID);
                 for (int iD = 0; iD < alDTLiq.size(); iD++)
@@ -426,7 +449,7 @@
                         if (sInsType.equals("I"))
                         {
                             sUKEYiq = iqIssueFWIG(dbFWIGiq, commonIQ, htTXNiq, htDTLiq,
-                                                  alWorkersIq, IQ_USERID);
+                                                  alWorkersIq, IQ_USERID, sCLIENTIDiq);
                         }
                         else
                         {
@@ -440,7 +463,7 @@
                                 if (!sIGKey.equals("") && !sIGKey.startsWith("MCK")) sIGNO = sIGKey;
                             }
                             sUKEYiq = iqIssueFWHS(dbFWHSiq, commonIQ, htTXNiq, htDTLiq,
-                                                  alWorkersIq, IQ_USERID, sIGNO);
+                                                  alWorkersIq, IQ_USERID, sIGNO, sCLIENTIDiq);
                         }
 
                         /* stamp the linkage back onto the online DTL row (POLICY_NO

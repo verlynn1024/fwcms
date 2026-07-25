@@ -1118,8 +1118,13 @@ public class FWCMSOnline extends DB_Contact{
 	   Runs on this bean's own connection (opened by the caller), never
 	   on the DB_FWIG / DB_FWHS class-table transaction, and never throws
 	   — resolving a client must not roll back an issuance that the
-	   customer has already paid for. */
-	private String resolveClientId(Hashtable htTXN, String USERID){
+	   customer has already paid for.
+
+	   public: the live issuance path is pop_fwcms_issue_quotation.jsp (it
+	   drives DB_FWIG / DB_FWHS itself and uses this bean only for the
+	   TB_FWCMS_ONLINE* reads and stamp-backs), so that page has to be able
+	   to resolve the CLIENTID through here rather than writing a blank. */
+	public String resolveClientId(Hashtable htTXN, String USERID){
 
 		String BUSINESS_NO   = nz((String)htTXN.get("BUSINESS_NO"));
 		String EMPLOYER_NAME = nz((String)htTXN.get("EMPLOYER_NAME"));
@@ -1509,12 +1514,14 @@ public class FWCMSOnline extends DB_Contact{
 	}
 
 	/* The principal on whose behalf the portal issues the guarantee —
-	   fixed for this deployment (principal 08), so it needs no lookup. */
-	private static final String GL_PRINCIPLE_NAME = "Liberty General Insurance Berhad";
+	   fixed for this deployment (principal 08), so it needs no lookup.
+	   public: pop_fwcms_issue_quotation.jsp reads it as FWCMSOnline.GL_PRINCIPLE_NAME. */
+	public static final String GL_PRINCIPLE_NAME = "Liberty General Insurance Berhad";
 
 	/* Principal code the portal issues under (principal 08) — used to resolve
-	   the worker nationality code to its TB_FWIGPREM description for the GL. */
-	private static final String GL_PRINCIPLE_CODE = "08";
+	   the worker nationality code to its TB_FWIGPREM description for the GL.
+	   public: pop_fwcms_issue_quotation.jsp reads it as FWCMSOnline.GL_PRINCIPLE_CODE. */
+	public static final String GL_PRINCIPLE_CODE = "08";
 
 	/* [RETIRED from the print pipeline] FWIG Guarantee Letter print model
 	   built from the Bestinet online-portal tables (TB_FWCMS_ONLINE + _DTL
