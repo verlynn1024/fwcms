@@ -1126,7 +1126,7 @@ public class FWCMSOnline extends DB_Contact{
 
 		try{
 			long lAutonum = findContact(BUSINESS_NO, EMPLOYER_NAME, USERID);
-			if (lAutonum <= 0) lAutonum = createContact(BUSINESS_NO, EMPLOYER_NAME, USERID);
+			if (lAutonum <= 0) lAutonum = createContact(htTXN, USERID);
 			if (lAutonum > 0) return String.valueOf(lAutonum);
 		}
 		catch (Exception ex){
@@ -1170,63 +1170,57 @@ public class FWCMSOnline extends DB_Contact{
 		return lAutonum;
 	}
 
-	/* Create the client row for this employer. AUTONUM is a generated
-	   key in most environments, so insert without it and read the key
-	   back; where it is a plain numeric column that insert fails and the
-	   MAX()+1 path assigns the key explicitly (the same pattern
-	   DB_FWIG.getGuarantorNo uses on TB_GUARANTOR). */
-	private long createContact(String BUSINESS_NO, String NAME, String USERID) throws Exception{
+	/* Create the client row for this employer through the SAME insert the
+	   eCover "Add Client" screen uses: FWCMSOnline extends DB_Contact, so
+	   DB_Contact.insert_contact is inherited — no TB_CONTACT insert SQL is
+	   duplicated here and AUTONUM stays the table's IDENTITY key
+	   (insert_contact reads it back with IDENTITY_VAL_LOCAL). It returns
+	   "<AUTONUM> <NAME>"; getKey takes the key off the front.
 
+	   Column values follow what the class-table CN rows already carry for
+	   the same employer (CONTACT_TYPE 'C' = company, IS_CLIENT 'Y',
+	   DELETED 'N'). NATURE_OF_BUSS is VARCHAR(4), so the journey's nature
+	   code is only carried when it fits; the description always goes into
+	   TRADE. */
+	private long createContact(Hashtable htTXN, String USERID) throws Exception{
+
+		String BUSINESS_NO = nz((String)htTXN.get("BUSINESS_NO"));
+		String NAME        = nz((String)htTXN.get("EMPLOYER_NAME"));
 		if (NAME.equals("")) NAME = BUSINESS_NO;
 		if (NAME.equals("")) return 0;
 
+		String NATURE_CODE = nz((String)htTXN.get("NATURE_BUSINESS"));
+		if (NATURE_CODE.length() > 4) NATURE_CODE = "";
+
+		String sResult = insert_contact(
+			USERID, "C", "Y", "", "",                            /* USERID, CONTACT_TYPE, IS_CLIENT, NEW_IC_NO, OLD_IC_NO */
+			BUSINESS_NO, "", "", "", "",                         /* BUSINESS_NO, DOB, GENDER, BODY_CORP, MARITAL_STATUS  */
+			NAME,
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_1")),
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_2")),
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_3")),
+			nz((String)htTXN.get("EMPLOYER_ADDRESS_4")),
+			nz((String)htTXN.get("EMPLOYER_POSTCODE")),
+			"", "",                                              /* OCCUPATION_CODE, OCCUPATION_DESC */
+			nz((String)htTXN.get("NATURE_BUSINESS_DESCP")),      /* TRADE            */
+			"",                                                  /* TEL_NO_HOME      */
+			nz((String)htTXN.get("EMPLOYER_PHONE")),             /* TEL_NO_OFFICE    */
+			"", "", "",                                          /* FAX_HOME, FAX_OFFICE, MOBILE_NO */
+			nz((String)htTXN.get("EMPLOYER_EMAIL")),
+			"", "", "",                                          /* COMMENTS, REFERRED_BY, CONTACT_STATUS */
+			now(), "N",                                          /* DATE_CREATED, DELETED */
+			"", "", "",                                          /* SALUTATION, NATIONALITY, RACE */
+			nz((String)htTXN.get("EMPLOYER_STATE")),
+			comm.getKey(nz((String)htTXN.get("ACCODE")), " "),   /* ACCODE           */
+			"", "",                                              /* VERIFY, AGE      */
+			"", NATURE_CODE);                                    /* EMPLOYER_NAME, NATURE_OF_BUSS */
+
 		try{
-			PreparedStatement ps = myConn.prepareStatement(
-				"INSERT INTO TB_CONTACT (NAME,BUSINESS_NO,USERID) VALUES (?,?,?)");
-			ps.setString(1, NAME);
-			ps.setString(2, BUSINESS_NO);
-			ps.setString(3, USERID);
-			ps.executeUpdate();
-			ps.close();
-
-			long lAutonum = 0;
-			PreparedStatement psKey = myConn.prepareStatement(
-				"SELECT BIGINT(IDENTITY_VAL_LOCAL()) FROM SYSIBM.SYSDUMMY1");
-			ResultSet rsKey = psKey.executeQuery();
-			if (rsKey.next()) lAutonum = rsKey.getLong(1);
-			rsKey.close();
-			psKey.close();
-
-			/* no identity value (non-generated AUTONUM in this schema) —
-			   the row is in, so read its key back by employer */
-			if (lAutonum <= 0) lAutonum = findContact(BUSINESS_NO, NAME, USERID);
-
-			if (lAutonum > 0) return lAutonum;
+			return Long.parseLong(comm.getKey(nz(sResult), " ").trim());
 		}
-		catch (Exception exGenerated){
-			System.out.println("[FWCMSPRINT] createContact: generated-key insert unavailable ("
-				+ exGenerated.getMessage() + ") - assigning AUTONUM explicitly");
+		catch (NumberFormatException nfe){
+			return 0;
 		}
-
-		long lNext = 0;
-		PreparedStatement psMax = myConn.prepareStatement(
-			"SELECT COALESCE(MAX(AUTONUM),0)+1 FROM TB_CONTACT WITH UR");
-		ResultSet rsMax = psMax.executeQuery();
-		if (rsMax.next()) lNext = rsMax.getLong(1);
-		rsMax.close();
-		psMax.close();
-		if (lNext <= 0) return 0;
-
-		PreparedStatement ps = myConn.prepareStatement(
-			"INSERT INTO TB_CONTACT (AUTONUM,NAME,BUSINESS_NO,USERID) VALUES (?,?,?,?)");
-		ps.setLong(1, lNext);
-		ps.setString(2, NAME);
-		ps.setString(3, BUSINESS_NO);
-		ps.setString(4, USERID);
-		ps.executeUpdate();
-		ps.close();
-
-		return lNext;
 	}
 
 	/* FWIG — TB_TRANSACTION, TB_FWIGCN, TB_FWIGMAST, TB_FWIGSCH via the
@@ -1296,7 +1290,7 @@ public class FWCMSOnline extends DB_Contact{
 				"", (String)htTXN.get("NATURE_BUSINESS_DESCP"),
 				"", "", (String)htTXN.get("EMPLOYER_PHONE"), "", (String)htTXN.get("EMPLOYER_EMAIL"), "", "",
 				(String)htTXN.get("BUSINESS_NO"), "", "C", "", "SAVED", "", "", "", dNETPREM, "",
-				"", "", "", "N", "", "", "", "",
+				"", "", CLIENTID, "N", "", "", "", "",       /* CANCELDATE, SUBMISSIONNO, CONTACTID, DELETED */
 				UWYR_YR, UWYR_MTH, "", "", "IG", "", "");
 
 			/* 3. TB_FWIGMAST — ^-delimited worker lists + per-nationality
@@ -1446,7 +1440,7 @@ public class FWCMSOnline extends DB_Contact{
 				"", (String)htTXN.get("NATURE_BUSINESS_DESCP"),
 				"", "", (String)htTXN.get("EMPLOYER_PHONE"), "", (String)htTXN.get("EMPLOYER_EMAIL"), "", "",
 				(String)htTXN.get("BUSINESS_NO"), "", "C", "SAVED", "", "", "", dNETPREM, "",
-				"", "", "", "N", "", "", "", "",
+				"", "", CLIENTID, "N", "", "", "", "",       /* CANCELDATE, SUBMISSIONNO, CONTACTID, DELETED */
 				UWYR_YR, UWYR_MTH, "", "FWHS", "",
 				(String)htTXN.get("NATURE_BUSINESS"), "", "", IG_NO);
 

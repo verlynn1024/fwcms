@@ -116,14 +116,19 @@ class-table transaction opens (`FWCMSOnline.resolveClientId`):
 
 1. reuse the agent's existing `TB_CONTACT` row — `BUSINESS_NO` + `USERID`, then
    `BUSINESS_NO`, then `EMPLOYER_NAME` + `USERID`;
-2. otherwise create it (`NAME`, `BUSINESS_NO`, `USERID`) — generated `AUTONUM`
-   first, explicit `MAX(AUTONUM)+1` where the key is a plain numeric column;
+2. otherwise create it through the inherited `DB_Contact.insert_contact()` —
+   the same insert the eCover "Add Client" screen uses, so no `TB_CONTACT` SQL
+   is duplicated and `AUTONUM` stays the table's `IDENTITY` key
+   (`CONTACT_TYPE='C'`, `IS_CLIENT='Y'`, `DELETED='N'`, employer address /
+   phone / email / nature-of-business carried from the journey);
 3. on any failure, fall back to `"0"` — still numeric, so the enquiry keeps
    running; that row simply does not join to a client.
 
 The lookup runs on the `FWCMSOnline` connection, not on the `DB_FWIG` /
 `DB_FWHS` class-table transaction, and never throws: resolving a client must
-never roll back an issuance the customer has already paid for.
+never roll back an issuance the customer has already paid for. The resolved key
+is also written to `TB_FWIGCN` / `TB_FWHSCN`.`CONTACTID`, which the legacy
+cover-note screens read.
 
 **Rows already written with a blank `CLIENTID`** (issued before this fix) keep
 breaking the enquiry until they are repaired, e.g.:
