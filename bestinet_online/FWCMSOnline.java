@@ -1510,11 +1510,11 @@ public class FWCMSOnline extends DB_Contact{
 
 	/* The principal on whose behalf the portal issues the guarantee —
 	   fixed for this deployment (principal 08), so it needs no lookup. */
-	private static final String GL_PRINCIPLE_NAME = "Liberty General Insurance Berhad";
+	public static final String GL_PRINCIPLE_NAME = "Liberty General Insurance Berhad";
 
 	/* Principal code the portal issues under (principal 08) — used to resolve
 	   the worker nationality code to its TB_FWIGPREM description for the GL. */
-	private static final String GL_PRINCIPLE_CODE = "08";
+	public static final String GL_PRINCIPLE_CODE = "08";
 
 	/* [RETIRED from the print pipeline] FWIG Guarantee Letter print model
 	   built from the Bestinet online-portal tables (TB_FWCMS_ONLINE + _DTL
