@@ -355,3 +355,133 @@ MASTERIND                       SYSIBM    VARCHAR                      2     0 Y
 MASTERPOL                       SYSIBM    VARCHAR                     50     0 Yes
 
   66 record(s) selected.
+
+
+db2 => describe table TB_CONTACT
+
+                                Data type                     Column
+Column name                     schema    Data type name      Length     Scale Nulls
+------------------------------- --------- ------------------- ---------- ----- ------
+AUTONUM                         SYSIBM    INTEGER                      4     0 No
+USERID                          SYSIBM    VARCHAR                     20     0 Yes
+CONTACT_TYPE                    SYSIBM    VARCHAR                     20     0 Yes
+IS_CLIENT                       SYSIBM    VARCHAR                      5     0 Yes
+NEW_IC_NO                       SYSIBM    VARCHAR                     20     0 Yes
+OLD_IC_NO                       SYSIBM    VARCHAR                     24     0 Yes
+BUSINESS_NO                     SYSIBM    VARCHAR                     25     0 Yes
+DOB                             SYSIBM    VARCHAR                      8     0 Yes
+GENDER                          SYSIBM    VARCHAR                      5     0 Yes
+BODY_CORP                       SYSIBM    VARCHAR                     20     0 Yes
+MARITAL_STATUS                  SYSIBM    VARCHAR                     20     0 Yes
+NAME                            SYSIBM    VARCHAR                    255     0 Yes
+ADDRESS_1                       SYSIBM    VARCHAR                    255     0 Yes
+ADDRESS_2                       SYSIBM    VARCHAR                    255     0 Yes
+ADDRESS_3                       SYSIBM    VARCHAR                    255     0 Yes
+ADDRESS_4                       SYSIBM    VARCHAR                    255     0 Yes
+OCCUPATION_CODE                 SYSIBM    VARCHAR                     20     0 Yes
+OCCUPATION_DESC                 SYSIBM    VARCHAR                    255     0 Yes
+TRADE                           SYSIBM    VARCHAR                    255     0 Yes
+TEL_NO_HOME                     SYSIBM    VARCHAR                     20     0 Yes
+TEL_NO_OFFICE                   SYSIBM    VARCHAR                     20     0 Yes
+FAX_NO_HOME                     SYSIBM    VARCHAR                     20     0 Yes
+FAX_NO_OFFICE                   SYSIBM    VARCHAR                     20     0 Yes
+MOBILE_NO                       SYSIBM    VARCHAR                     20     0 Yes
+EMAIL                           SYSIBM    VARCHAR                    255     0 Yes
+COMMENTS                        SYSIBM    LONG VARCHAR             32700     0 Yes
+REFERRED_BY                     SYSIBM    VARCHAR                    100     0 Yes
+CONTACT_STATUS                  SYSIBM    VARCHAR                     20     0 Yes
+DATE_CREATED                    SYSIBM    VARCHAR                     20     0 Yes
+DELETED                         SYSIBM    VARCHAR                      5     0 Yes
+POSTCODE                        SYSIBM    VARCHAR                    255     0 Yes
+RACE                            SYSIBM    VARCHAR                     10     0 Yes
+NATIONALITY                     SYSIBM    VARCHAR                     30     0 Yes
+RESIDENT_STATUS                 SYSIBM    VARCHAR                      5     0 Yes
+SALUTATION                      SYSIBM    VARCHAR                     10     0 Yes
+STATE                           SYSIBM    VARCHAR                     20     0 Yes
+GROUPIND                        SYSIBM    VARCHAR                      5     0 Yes
+PASSPORT                        SYSIBM    VARCHAR                     20     0 Yes
+ACCODE                          SYSIBM    VARCHAR                     20     0 Yes
+VERIFY                          SYSIBM    VARCHAR                      5     0 Yes
+MST_CONTACTID                   SYSIBM    VARCHAR                     20     0 Yes
+AGE                             SYSIBM    VARCHAR                      4     0 Yes
+COUNTRY                         SYSIBM    VARCHAR                     10     0 Yes
+UPDATEDATETIME                  SYSIBM    VARCHAR                     14     0 Yes
+NAME2                           SYSIBM    VARCHAR                     60     0 Yes
+ADDRESS_TYPE                    SYSIBM    VARCHAR                      1     0 Yes
+CATEGORY                        SYSIBM    VARCHAR                      2     0 Yes
+EMPLOYER_NAME                   SYSIBM    VARCHAR                     50     0 Yes
+NATURE_OF_BUSS                  SYSIBM    VARCHAR                      4     0 Yes
+ID_TYPE                         SYSIBM    VARCHAR                      1     0 Yes
+PASIA_IND                       SYSIBM    VARCHAR                      1     0 Yes
+DA_IND                          SYSIBM    VARCHAR                      1     0 Yes
+OTHER_ID                        SYSIBM    VARCHAR                      1     0 Yes
+CORPORATE_TYPE                  SYSIBM    VARCHAR                      7     0 Yes
+PIB_CONTACTID                   SYSIBM    VARCHAR                     10     0 Yes
+MEDX_IND                        SYSIBM    VARCHAR                      5     0 Yes
+PA_IND                          SYSIBM    VARCHAR                      1     0 Yes
+TOWN_DESC                       SYSIBM    VARCHAR                     50     0 Yes
+DECLARATION_1                   SYSIBM    VARCHAR                      2     0 Yes
+DECLARATION_2                   SYSIBM    VARCHAR                      2     0 Yes
+TIN                             SYSIBM    VARCHAR                     20     0 Yes
+SST_REGNO                       SYSIBM    VARCHAR                     20     0 Yes
+MSIC_CODE                       SYSIBM    VARCHAR                     10     0 Yes
+TIN_VALIDATION                  SYSIBM    VARCHAR                      2     0 Yes
+BUSINESS_TYPE                   SYSIBM    VARCHAR                      5     0 Yes
+TIN_NRIC                        SYSIBM    VARCHAR                     20     0 Yes
+FOREIGN_IND                     SYSIBM    VARCHAR                      1     0 Yes
+
+  67 record(s) selected.
+
+db2 => describe table TB_TRANSACTION
+
+                                Data type                     Column
+Column name                     schema    Data type name      Length     Scale Nulls
+------------------------------- --------- ------------------- ---------- ----- ------
+AUTONUM                         SYSIBM    INTEGER                      4     0 No
+CLASS                           SYSIBM    VARCHAR                     50     0 Yes
+TYPE                            SYSIBM    VARCHAR                     50     0 Yes
+IDNO                            SYSIBM    VARCHAR                    255     0 Yes
+USERID                          SYSIBM    VARCHAR                     20     0 Yes
+TIMESTAMP                       SYSIBM    VARCHAR                     20     0 Yes
+CLIENTID                        SYSIBM    VARCHAR                     20     0 Yes
+DELETED                         SYSIBM    VARCHAR                     20     0 Yes
+PRINCIPLE                       SYSIBM    VARCHAR                     10     0 Yes
+ACCODE                          SYSIBM    VARCHAR                     20     0 Yes
+CNISSDATE                       SYSIBM    VARCHAR                     20     0 Yes
+VEHNO                           SYSIBM    VARCHAR                     50     0 Yes
+PREMIUM                         SYSIBM    DECIMAL                     15     4 Yes
+CNSTATUS                        SYSIBM    VARCHAR                     50     0 Yes
+JPJSTATUS                       SYSIBM    LONG VARCHAR             32700     0 Yes
+POLNO                           SYSIBM    VARCHAR                     50     0 Yes
+REC_NO                          SYSIBM    VARCHAR                     50     0 Yes
+PAY_NO                          SYSIBM    VARCHAR                     50     0 Yes
+PAY_TYPE                        SYSIBM    LONG VARCHAR             32700     0 Yes
+PAY_AMT                         SYSIBM    LONG VARCHAR             32700     0 Yes
+PAY_STATUS                      SYSIBM    VARCHAR                     30     0 Yes
+PAY_DATE                        SYSIBM    VARCHAR                     20     0 Yes
+CNCODE                          SYSIBM    VARCHAR                    100     0 Yes
+REC_BALANCE                     SYSIBM    DECIMAL                     15     4 Yes
+PRINCIPLE_TRANSAC               SYSIBM    VARCHAR                     10     0 Yes
+BR_ID                           SYSIBM    VARCHAR                     20     0 Yes
+MANUAL_CNOTENO                  SYSIBM    VARCHAR                     50     0 Yes
+QUICK_IND                       SYSIBM    VARCHAR                      5     0 Yes
+HPISSDATE                       SYSIBM    VARCHAR                     20     0 Yes
+LOANCOM                         SYSIBM    VARCHAR                     50     0 Yes
+FENDORSE_DATE                   SYSIBM    VARCHAR                     20     0 Yes
+BRUSERID                        SYSIBM    VARCHAR                     20     0 Yes
+ADDDRIVER_CODE                  SYSIBM    VARCHAR                      5     0 Yes
+FENDORSEMENT_DATE               SYSIBM    VARCHAR                     20     0 Yes
+CANCELREMARK2                   SYSIBM    VARCHAR                    255     0 Yes
+RB_CANCELREMARK                 SYSIBM    VARCHAR                    255     0 Yes
+BR_CANCELREMARK                 SYSIBM    VARCHAR                    255     0 Yes
+FENDT_TYPE                      SYSIBM    VARCHAR                     10     0 Yes
+SUBCLS_DESCP                    SYSIBM    VARCHAR                    100     0 Yes
+REPLACEIND                      SYSIBM    VARCHAR                      1     0 Yes
+EPAI_APPROVED                   SYSIBM    VARCHAR                      1     0 Yes
+CNTYPE                          SYSIBM    VARCHAR                     10     0 Yes
+MODE                            SYSIBM    VARCHAR                     20     0 Yes
+REFNO                           SYSIBM    VARCHAR                     25     0 Yes
+BRID                            SYSIBM    VARCHAR                      5     0 Yes
+QUICK_QUO                       SYSIBM    VARCHAR                      1     0 Yes
+
+  46 record(s) selected.
