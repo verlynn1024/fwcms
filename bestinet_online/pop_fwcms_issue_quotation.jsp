@@ -118,7 +118,7 @@
         String PRINCIPLE = FWCMSOnline.GL_PRINCIPLE_CODE;
         String ACCODE    = comm.getKey((String) htTXN.get("ACCODE"), " ");
 
-        String ISSDATE = iqFmtNow("yyyyMMddHHmmss");
+        String ISSDATE = iqFmtNow("yyyyMMdd");
         String CNTIME  = iqFmtNow("HHmmss");
         String NOW14   = iqFmtNow("yyyyMMddHHmmss");
         String EFFDATE = (String) htDTL.get("EFF_DATE");
@@ -267,7 +267,7 @@
         String PRINCIPLE = FWCMSOnline.GL_PRINCIPLE_CODE;
         String ACCODE    = comm.getKey((String) htTXN.get("ACCODE"), " ");
 
-        String ISSDATE = iqFmtNow("yyyyMMddHHmmss");
+        String ISSDATE = iqFmtNow("yyyyMMdd");
         String CNTIME  = iqFmtNow("HHmmss");
         String NOW14   = iqFmtNow("yyyyMMddHHmmss");
         String EFFDATE = (String) htDTL.get("EFF_DATE");
@@ -403,7 +403,7 @@
 
             if (htTXNiq != null)
             {
-                String sIssDate = iqFmtNow("yyyyMMddHHmmss");
+                String sIssDate = iqFmtNow("yyyyMMdd");
                 String sSuffix  = iqFmtNow("yyMMddHHmmss");
 
                 /* ── issue every product's quotation into the main tables ── */
