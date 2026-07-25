@@ -315,6 +315,13 @@ first use, so no manual seeding is required:
 The code still degrades to the `MCK…` mock stamp if either generator (or any
 class-table insert) throws.
 
+**DDL that must be applied** (unlike the counters above, this one is not
+self-creating): `MIGRATE_FWCMS_ONLINE_QUOTATION_REF.sql` — the reference
+counter, the policy table and the two worker-link columns of §10. The worker
+snapshot writes `POLICY_REF` / `POLICY_WORKER_SEQ`, so run it before deploying.
+The policy write itself is guarded by its own `try`/`catch`, so a missing
+`TB_FWCMS_ONLINE_POLICY` costs the linkage but not the premium snapshot.
+
 ## 8. Reused legacy methods (no SQL duplicated)
 
 | Concern | Reused method |
@@ -341,52 +348,83 @@ class-table insert) throws.
 - The online tables remain the portal's tracking record; the `UUID`→`CNCODE`
   linkage is written back after issuance so both views stay consistent.
 - No legacy business logic was modified; the portal only *calls* it.
+## 10. Portal reference numbering (pre-payment)
 
-## 10. Portal quotation reference (pre-payment) — `TB_FWCMS_ONLINE_DTL.REFNO`
-
-Before payment there is no cover note, so the portal needs a reference of its
-own for each product of a journey. `TB_FWCMS_ONLINE_DTL.REFNO` used to be a
-second copy of the Bestinet ITR — the same value `BTN_TRANS_REF` already
-carried, identifying nothing of the portal's own record. It now holds a
-**running number**:
+Before payment there is no cover note, so the portal needs references of its
+own. There are three levels, all drawn from one running-number series
+(`"Q"` + 5 digits) and all assigned before any money moves — journeys that are
+never purchased keep theirs, which is the point: they are the record of what
+was quoted.
 
 ```
-Q00001, Q00002, Q00003, …          ("Q" + 5-digit counter)
+TB_FWCMS_ONLINE            journey   ePLKS/FWCMS/QBAD1234567   (Bestinet App. No.)
+  TB_FWCMS_ONLINE_DTL      product   Q00001                    (= its first policy)
+    TB_FWCMS_ONLINE_POLICY policy    Q00001, Q00002, Q00003
+      TB_FWCMS_ONLINE_WORKER worker  Q00001-001, Q00001-002
 ```
 
-| Column | Carries | Set by |
-| --- | --- | --- |
-| `TB_FWCMS_ONLINE.REFNO` | Bestinet Application No. `ePLKS/FWCMS/…` (front end: "Application No.") — **unchanged** | `updateFWCMSONLINETRANSEnquiry` |
-| `TB_FWCMS_ONLINE_DTL.REFNO` | **portal quotation reference `Q00001`** | `insertFWCMSONLINEDTL` (generated, once) |
-| `TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF` | Bestinet ITR (`PIG25…` / `PHS25…`) | enquiry request + response legs |
-| `TB_FWCMS_ONLINE_DTL.CNCODE` | issued class-table cover note | `updateFWCMSONLINEDTLIssued`, after payment |
+| Column | Carries |
+| --- | --- |
+| `TB_FWCMS_ONLINE.REFNO` | Bestinet Application No. — **unchanged** |
+| `TB_FWCMS_ONLINE_DTL.REFNO` | product master = its first policy's `POLICY_REF` |
+| `TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF` | the Bestinet ITR (`PIG25…`), its only home |
+| `TB_FWCMS_ONLINE_POLICY.POLICY_REF` | **the policy's running number** |
+| `TB_FWCMS_ONLINE_WORKER.POLICY_REF` + `POLICY_WORKER_SEQ` | the worker's reference |
 
-So one product row reads end to end as
-`Q00001 → ITR PIG25… → CNCODE 08EGY0013690`.
+### 10.1 The policy level
 
-**Generation.** `FWCMSOnline.getNextQuotationRef()` increments
-`TB_FWCMS_ONLINE_RUNNO (INSCODE, SERIES='QUO', RUNNO)` under a
-`FOR UPDATE WITH RS` read — the same locking pattern as the legacy
-`DB_FWHS.getREFNO` / `TB_CNSERIES` generator — and auto-seeds the row with 1 on
-first use, so no manual seeding is required. DDL:
-`MIGRATE_FWCMS_ONLINE_QUOTATION_REF.sql`.
+`TB_FWCMS_ONLINE_POLICY` is new, and it fills the gap the schema had: DTL is
+one row per product, but a Bestinet enquiry can carry several logical policies
+inside one product. FWHS splits on **permit expiry + nationality** — any
+difference in either, even a single day, is a separate policy — while FWIG is
+always one policy over its fixed 18-month period. That split previously existed
+only as a render-time grouping inside `pop_fwcms_worker_detail.jsp`, so nothing
+about it was stored and nothing could reference it.
 
-**Stability.** The number is assigned once, when the DTL row is created, and is
-never rewritten: `updateFWCMSONLINEDTLRequest` (portal retry / re-enquiry)
-refreshes `BTN_TRANS_REF` and leaves `REFNO` alone, so an agent keeps the
-reference already shown. `ensureQuotationRef` backfills rows written before this
-scheme (any `REFNO` that is not a `Q` number) the next time they are re-enquired.
+Each row carries its grouping key, nationality, coverage dates, worker count
+and money, so the quoted policy is reconstructable from the database alone.
+`CNCODE` is deliberately **not** here: cover notes are still generated per
+product after payment (§5), and this level is pre-payment tracking.
 
-**Consumers.** Everything that needs Bestinet's ITR — `issueFWIG` / `issueFWHS`
+### 10.2 Where the numbers are assigned
+
+- **Counter** — `FWCMSOnline.getNextQuotationRef()` increments
+  `TB_FWCMS_ONLINE_RUNNO (INSCODE, SERIES='QUO', RUNNO)` under a
+  `FOR UPDATE WITH RS` read, the same locking pattern as the legacy
+  `DB_FWHS.getREFNO` / `TB_CNSERIES` generator, and auto-seeds the row on first
+  use. Nothing needs manual seeding.
+- **Product master** — assigned by `insertFWCMSONLINEDTL` at enquiry time, so
+  even an enquiry that dies before the premium step is traceable.
+- **Policies** — assigned by `syncFWCMSONLINEPOLICY`, called from
+  `pop_fwcms_capturePremium.jsp`, which holds the enquiry vectors the grouping
+  is computed from. The product's first policy adopts the master (so a
+  single-policy product reads the same at both levels and no number is wasted);
+  further policies draw their own.
+- **Workers** — stamped during the same worker snapshot pass:
+  `POLICY_REF` + `POLICY_WORKER_SEQ`, the worker's position **inside its own
+  policy**, composed by `FWCMSOnline.buildWorkerRef` as `Q00001-001`.
+
+### 10.3 Re-run behaviour
+
+The premium step re-runs on every retry, so `syncFWCMSONLINEPOLICY` reconciles
+rather than rewrites: a group that still exists **keeps its `POLICY_REF`** and
+only has its figures and ordinal refreshed, a group that has disappeared is
+deleted, and only a genuinely new group draws a number. `DTL.REFNO` is
+re-pointed at the first policy so master and policy never drift.
+`updateFWCMSONLINEDTLRequest` (re-enquiry) leaves `REFNO` alone entirely, and
+`ensureQuotationRef` backfills any DTL row whose `REFNO` is not a `Q` number.
+
+### 10.4 Consumers
+
+Everything needing Bestinet's ITR — `issueFWIG` / `issueFWHS`
 (`TB_FWIGSCH` / `TB_FWHSSCH`.`FWCMSREFNO`), `getFWIGGLPrintDataOnline`,
-`pop_fwcms_issue_quotation.jsp` — reads `BTN_TRANS_REF` only; the previous
-`REFNO` fallbacks were removed, since that column no longer holds an ITR.
+`pop_fwcms_issue_quotation.jsp` — reads `BTN_TRANS_REF` only; the old `REFNO`
+fallbacks were removed, since that column no longer holds an ITR.
 
-**Front end.** The worker-detail page's Policy Details cards derived their
-"Policy Ref." from the ITR plus the group ordinal (`ITR-01`, `ITR-02`). They now
-build it from this quotation reference — `Q00001-01`, `Q00001-02` — where the
-stem is the persisted product record and the suffix is the logical policy group
-(FWHS splits on permit expiry + nationality; FWIG is always one group). It stays
-a grouping reference, not an issued policy number. If the page is opened outside
-a tracked journey (no `SES_FWCMS_ONLINE_UUID`) or the read fails, it falls back
-to the old ITR-based label rather than showing nothing.
+The worker-detail page's Policy Details table shows each policy's stored
+`POLICY_REF` as its "Policy Ref." (matched on the grouping key, then on the
+ordinal), replacing the old `ITR-01` / `ITR-02` label derived at render time.
+Its policy View modal leads with a **Ref.** column showing each worker's
+`Q00001-001`. If the page is opened outside a tracked journey, or the read
+fails, it falls back to the previous ITR-based label rather than showing
+nothing.

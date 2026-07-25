@@ -349,6 +349,16 @@ public class FWCMSOnline extends DB_Contact{
 		return QUOREF_PREFIX + quoRefFormat.format(lRunNo);
 	}
 
+	/* A worker's own reference: its policy's running number plus the worker's
+	   3-digit sequence inside that policy — Q00001-001. Blank when the worker
+	   carries no policy link (rows written before this scheme). */
+	public String buildWorkerRef(String POLICYREF,int POLICYWORKERSEQ){
+		if (POLICYREF == null || POLICYREF.trim().equals("") || POLICYWORKERSEQ <= 0) return "";
+		return POLICYREF.trim() + "-" + workerRefFormat.format(POLICYWORKERSEQ);
+	}
+
+	private DecimalFormat workerRefFormat = new DecimalFormat("000");
+
 	/* The quotation reference already assigned to one product row, or ""
 	   when the row does not exist / predates this scheme. Read-only — the
 	   worker-detail page shows it as the policy reference. */
@@ -380,30 +390,40 @@ public class FWCMSOnline extends DB_Contact{
 		if (REFNO.startsWith(QUOREF_PREFIX)) return REFNO;
 
 		REFNO = getNextQuotationRef();
-
-		String NOW = now();
-		String myQuery = "UPDATE TB_FWCMS_ONLINE_DTL SET REFNO=?,UPDATED_BY=?,UPDATED_DATE=? "+
-						 "WHERE UUID=? AND INSURANCE_TYPE=?";
-		pstmt = myConn.prepareStatement(myQuery);
-		pstmt.setString(1,REFNO);
-		pstmt.setString(2,UPDATEDBY);
-		pstmt.setString(3,NOW);
-		pstmt.setString(4,UUID);
-		pstmt.setString(5,INSTYPE);
-		RowsAffected = pstmt.executeUpdate();
-		pstmt.close();
-
-		if (RowsAffected > 0){
-			pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-			pstmt2.setString(1,REFNO);
-			pstmt2.setString(2,UPDATEDBY);
-			pstmt2.setString(3,NOW);
-			pstmt2.setString(4,UUID);
-			pstmt2.setString(5,INSTYPE);
-			insertSQLLog2("SQL",pstmt2.toString(),"","","","");
-		}
+		updateFWCMSONLINEDTLRef(REFNO, UPDATEDBY, UUID, INSTYPE);
 
 		return REFNO;
+	}
+
+	/* Re-point a product's master reference — used by the backfill above and
+	   by syncFWCMSONLINEPOLICY, which keeps DTL.REFNO equal to the product's
+	   first policy. */
+	private int updateFWCMSONLINEDTLRef(String REFNO,String UPDATEDBY,String UUID,String INSTYPE)
+								throws Exception{
+
+			String NOW = now();
+			String myQuery = "UPDATE TB_FWCMS_ONLINE_DTL SET REFNO=?,UPDATED_BY=?,UPDATED_DATE=? "+
+							 "WHERE UUID=? AND INSURANCE_TYPE=?";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1,REFNO);
+			pstmt.setString(2,UPDATEDBY);
+			pstmt.setString(3,NOW);
+			pstmt.setString(4,UUID);
+			pstmt.setString(5,INSTYPE);
+			RowsAffected = pstmt.executeUpdate();
+			pstmt.close();
+
+			if (RowsAffected > 0){
+				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+				pstmt2.setString(1,REFNO);
+				pstmt2.setString(2,UPDATEDBY);
+				pstmt2.setString(3,NOW);
+				pstmt2.setString(4,UUID);
+				pstmt2.setString(5,INSTYPE);
+				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+			}
+
+			return RowsAffected;
 	}
 
 	/* =====================================================================
@@ -850,6 +870,282 @@ public class FWCMSOnline extends DB_Contact{
 	}
 
 	/* =====================================================================
+	   LOGICAL POLICIES — TB_FWCMS_ONLINE_POLICY
+	   The level that was missing between DTL (one row per product) and
+	   WORKER (one row per person): a Bestinet enquiry can carry several
+	   logical policies inside ONE product. FWHS splits on (permit expiry +
+	   nationality) — any difference in either is a separate policy; FWIG is
+	   always a single policy over its fixed 18-month period. That split used
+	   to exist only as a render-time grouping in the worker-detail page, so
+	   nothing about it was stored and nothing could reference it.
+
+	   Each policy carries its own running number (POLICY_REF, Q00001) drawn
+	   from the same counter as the DTL master, and TB_FWCMS_ONLINE_WORKER
+	   points back at it (POLICY_REF + POLICY_WORKER_SEQ), giving every
+	   worker a reference of the form Q00001-001. Pre-payment tracking only:
+	   the class-table CNCODE is still generated per product after payment
+	   and is NOT stored here.
+
+	   Written by the premium step (pop_fwcms_capturePremium.jsp), which
+	   holds the enquiry vectors the grouping is computed from, and re-run
+	   safe — see syncFWCMSONLINEPOLICY.
+	   DDL: MIGRATE_FWCMS_ONLINE_QUOTATION_REF.sql.
+	   ===================================================================== */
+
+	private static final String POLICY_COLUMNS =
+						 "UUID,INSURANCE_TYPE,POLICY_SEQ,POLICY_REF,GROUP_KEY,NATIONALITY,"+
+						 "COVER_FROM,COVER_TO,NO_WORKER,SUM_INSURED,GROSS_PREMIUM,SERVICE_FEE";
+
+	/* One product's policies, in POLICY_SEQ order. Keys match what the
+	   worker-detail page renders: POLICY_REF, GROUP_KEY, NATIONALITY,
+	   COVER_FROM, COVER_TO, NO_WORKER and the money columns. */
+	public ArrayList getFWCMSONLINEPOLICYList(String UUID,String INSTYPE) throws Exception{
+
+		String myQuery = "SELECT "+POLICY_COLUMNS+" FROM TB_FWCMS_ONLINE_POLICY "+
+						 "WHERE UUID=? AND INSURANCE_TYPE=? ORDER BY POLICY_SEQ WITH UR";
+
+		ArrayList alPolicy = new ArrayList();
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, UUID);
+		pstmt.setString(2, INSTYPE);
+		ResultSet rs = pstmt.executeQuery();
+		while (rs.next()){
+			Hashtable htPolicy = new Hashtable();
+			htPolicy.put("UUID",			nz(rs.getString("UUID")).trim());
+			htPolicy.put("INSURANCE_TYPE",	nz(rs.getString("INSURANCE_TYPE")));
+			htPolicy.put("POLICY_SEQ",		String.valueOf(rs.getInt("POLICY_SEQ")));
+			htPolicy.put("POLICY_REF",		nz(rs.getString("POLICY_REF")));
+			htPolicy.put("GROUP_KEY",		nz(rs.getString("GROUP_KEY")));
+			htPolicy.put("NATIONALITY",		nz(rs.getString("NATIONALITY")));
+			htPolicy.put("COVER_FROM",		nz(rs.getString("COVER_FROM")));
+			htPolicy.put("COVER_TO",		nz(rs.getString("COVER_TO")));
+			htPolicy.put("NO_WORKER",		String.valueOf(rs.getInt("NO_WORKER")));
+			htPolicy.put("SUM_INSURED",		nz(rs.getBigDecimal("SUM_INSURED")));
+			htPolicy.put("GROSS_PREMIUM",	nz(rs.getBigDecimal("GROSS_PREMIUM")));
+			htPolicy.put("SERVICE_FEE",		nz(rs.getBigDecimal("SERVICE_FEE")));
+			alPolicy.add(htPolicy);
+		}
+		rs.close();
+		pstmt.close();
+
+		return alPolicy;
+	}
+
+	/* GROUP_KEY -> POLICY_REF for one product, in POLICY_SEQ order — the
+	   lookup the worker-detail page matches its render-time groups against. */
+	public LinkedHashMap getFWCMSONLINEPOLICYRefs(String UUID,String INSTYPE) throws Exception{
+
+		LinkedHashMap mRefs = new LinkedHashMap();
+		ArrayList alPolicy = getFWCMSONLINEPOLICYList(UUID, INSTYPE);
+		for (int i = 0; i < alPolicy.size(); i++){
+			Hashtable htPolicy = (Hashtable) alPolicy.get(i);
+			mRefs.put((String)htPolicy.get("GROUP_KEY"), (String)htPolicy.get("POLICY_REF"));
+		}
+
+		return mRefs;
+	}
+
+	/* Reconcile one product's policies with the groups the premium step just
+	   computed, and return GROUP_KEY -> POLICY_REF in the given order.
+
+	   vGroups holds one String[] per group, in first-seen order:
+	     [0]GROUP_KEY [1]NATIONALITY [2]COVER_FROM [3]COVER_TO
+	     [4]NO_WORKER [5]SUM_INSURED [6]GROSS_PREMIUM [7]SERVICE_FEE
+
+	   Re-run safe, because the premium step re-runs on every retry: a group
+	   that already exists KEEPS its POLICY_REF (only its figures and ordinal
+	   are refreshed), a group that has disappeared is deleted, and only a
+	   genuinely new group draws a number. The product's first policy adopts
+	   the DTL master reference (assigned when the DTL row was created) when
+	   no other policy of that product already holds it, so a single-policy
+	   product reads identically at both levels and no number is wasted.
+	   DTL.REFNO is re-pointed at the first policy so the two never drift. */
+	public LinkedHashMap syncFWCMSONLINEPOLICY(String UUID,String INSTYPE,
+								Vector vGroups,String USERID)
+								throws Exception{
+
+		LinkedHashMap mRefs = new LinkedHashMap();
+		if (vGroups == null) return mRefs;
+
+		LinkedHashMap mExisting = getFWCMSONLINEPOLICYRefs(UUID, INSTYPE);
+		/* references already in use by this product — the master may only be
+		   adopted when no surviving policy is holding it */
+		Vector vUsed = new Vector();
+		Iterator itUsed = mExisting.values().iterator();
+		while (itUsed.hasNext()) vUsed.addElement(itUsed.next());
+
+		String MASTER = getQuotationRef(UUID, INSTYPE);
+		if (!MASTER.startsWith(QUOREF_PREFIX)) MASTER = "";
+
+		for (int i = 0; i < vGroups.size(); i++){
+			String[] sGroup = (String[]) vGroups.elementAt(i);
+			if (sGroup == null || sGroup.length < 8) continue;
+
+			int    POLICYSEQ = i + 1;
+			String GROUPKEY  = fit(nz(sGroup[0]), 150);
+			String POLICYREF = nz((String) mExisting.get(GROUPKEY));
+
+			if (POLICYREF.equals("")){
+				if (!MASTER.equals("") && !vUsed.contains(MASTER)){
+					POLICYREF = MASTER;
+				}else{
+					POLICYREF = getNextQuotationRef();
+				}
+				vUsed.addElement(POLICYREF);
+				insertFWCMSONLINEPOLICY(UUID, INSTYPE, POLICYSEQ, POLICYREF, GROUPKEY,
+						sGroup[1], sGroup[2], sGroup[3], sGroup[4], sGroup[5], sGroup[6], sGroup[7],
+						USERID);
+			}else{
+				updateFWCMSONLINEPOLICY(UUID, INSTYPE, POLICYSEQ, GROUPKEY,
+						sGroup[1], sGroup[2], sGroup[3], sGroup[4], sGroup[5], sGroup[6], sGroup[7],
+						USERID);
+			}
+
+			mRefs.put(GROUPKEY, POLICYREF);
+		}
+
+		/* groups that no longer exist (a re-enquiry changed the worker mix) */
+		Iterator itOld = mExisting.keySet().iterator();
+		while (itOld.hasNext()){
+			String GROUPKEY = (String) itOld.next();
+			if (!mRefs.containsKey(GROUPKEY)) deleteFWCMSONLINEPOLICY(UUID, INSTYPE, GROUPKEY);
+		}
+
+		/* keep the DTL master pointing at the product's first policy */
+		if (!mRefs.isEmpty()){
+			String FIRSTREF = (String) mRefs.values().iterator().next();
+			if (!FIRSTREF.equals(MASTER)) updateFWCMSONLINEDTLRef(FIRSTREF, USERID, UUID, INSTYPE);
+		}
+
+		return mRefs;
+	}
+
+	private int insertFWCMSONLINEPOLICY(String UUID,String INSTYPE,int POLICYSEQ,String POLICYREF,
+								String GROUPKEY,String NATIONALITY,String COVERFROM,String COVERTO,
+								String NOWORKER,String SUMINSURED,String GROSSPREMIUM,String SERVICEFEE,
+								String CREATEDBY)
+								throws Exception{
+
+			String NOW = now();
+			String myQuery = "INSERT INTO TB_FWCMS_ONLINE_POLICY (UUID,INSURANCE_TYPE,POLICY_SEQ,"+
+							 "POLICY_REF,GROUP_KEY,NATIONALITY,COVER_FROM,COVER_TO,NO_WORKER,"+
+							 "SUM_INSURED,GROSS_PREMIUM,SERVICE_FEE,CREATED_BY,CREATED_DATE)"+
+							 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1,fit(UUID,36));
+			pstmt.setString(2,fit(INSTYPE,10));
+			pstmt.setInt(3,POLICYSEQ);
+			pstmt.setString(4,fit(POLICYREF,20));
+			pstmt.setString(5,fit(GROUPKEY,150));
+			pstmt.setString(6,fit(NATIONALITY,100));
+			pstmt.setString(7,fit(COVERFROM,10));
+			pstmt.setString(8,fit(COVERTO,10));
+			pstmt.setInt(9,(int)toDecimal(NOWORKER).doubleValue());
+			pstmt.setBigDecimal(10,toDecimal(SUMINSURED));
+			pstmt.setBigDecimal(11,toDecimal(GROSSPREMIUM));
+			pstmt.setBigDecimal(12,toDecimal(SERVICEFEE));
+			pstmt.setString(13,fit(CREATEDBY,20));
+			pstmt.setString(14,NOW);
+			RowsAffected = pstmt.executeUpdate();
+			pstmt.close();
+
+			if (RowsAffected > 0){
+				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+				pstmt2.setString(1,fit(UUID,36));
+				pstmt2.setString(2,fit(INSTYPE,10));
+				pstmt2.setString(3,String.valueOf(POLICYSEQ));
+				pstmt2.setString(4,fit(POLICYREF,20));
+				pstmt2.setString(5,fit(GROUPKEY,150));
+				pstmt2.setString(6,fit(NATIONALITY,100));
+				pstmt2.setString(7,fit(COVERFROM,10));
+				pstmt2.setString(8,fit(COVERTO,10));
+				pstmt2.setString(9,String.valueOf((int)toDecimal(NOWORKER).doubleValue()));
+				pstmt2.setString(10,toDecimal(SUMINSURED).toPlainString());
+				pstmt2.setString(11,toDecimal(GROSSPREMIUM).toPlainString());
+				pstmt2.setString(12,toDecimal(SERVICEFEE).toPlainString());
+				pstmt2.setString(13,fit(CREATEDBY,20));
+				pstmt2.setString(14,NOW);
+				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+			}
+
+			return RowsAffected;
+	}
+
+	/* Figures of an existing policy — POLICY_REF is never rewritten. */
+	private int updateFWCMSONLINEPOLICY(String UUID,String INSTYPE,int POLICYSEQ,String GROUPKEY,
+								String NATIONALITY,String COVERFROM,String COVERTO,
+								String NOWORKER,String SUMINSURED,String GROSSPREMIUM,String SERVICEFEE,
+								String UPDATEDBY)
+								throws Exception{
+
+			String NOW = now();
+			String myQuery = "UPDATE TB_FWCMS_ONLINE_POLICY SET POLICY_SEQ=?,NATIONALITY=?,"+
+							 "COVER_FROM=?,COVER_TO=?,NO_WORKER=?,SUM_INSURED=?,GROSS_PREMIUM=?,"+
+							 "SERVICE_FEE=?,UPDATED_BY=?,UPDATED_DATE=? "+
+							 "WHERE UUID=? AND INSURANCE_TYPE=? AND GROUP_KEY=?";
+
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setInt(1,POLICYSEQ);
+			pstmt.setString(2,fit(NATIONALITY,100));
+			pstmt.setString(3,fit(COVERFROM,10));
+			pstmt.setString(4,fit(COVERTO,10));
+			pstmt.setInt(5,(int)toDecimal(NOWORKER).doubleValue());
+			pstmt.setBigDecimal(6,toDecimal(SUMINSURED));
+			pstmt.setBigDecimal(7,toDecimal(GROSSPREMIUM));
+			pstmt.setBigDecimal(8,toDecimal(SERVICEFEE));
+			pstmt.setString(9,fit(UPDATEDBY,20));
+			pstmt.setString(10,NOW);
+			pstmt.setString(11,fit(UUID,36));
+			pstmt.setString(12,fit(INSTYPE,10));
+			pstmt.setString(13,fit(GROUPKEY,150));
+			RowsAffected = pstmt.executeUpdate();
+			pstmt.close();
+
+			if (RowsAffected > 0){
+				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+				pstmt2.setString(1,String.valueOf(POLICYSEQ));
+				pstmt2.setString(2,fit(NATIONALITY,100));
+				pstmt2.setString(3,fit(COVERFROM,10));
+				pstmt2.setString(4,fit(COVERTO,10));
+				pstmt2.setString(5,String.valueOf((int)toDecimal(NOWORKER).doubleValue()));
+				pstmt2.setString(6,toDecimal(SUMINSURED).toPlainString());
+				pstmt2.setString(7,toDecimal(GROSSPREMIUM).toPlainString());
+				pstmt2.setString(8,toDecimal(SERVICEFEE).toPlainString());
+				pstmt2.setString(9,fit(UPDATEDBY,20));
+				pstmt2.setString(10,NOW);
+				pstmt2.setString(11,fit(UUID,36));
+				pstmt2.setString(12,fit(INSTYPE,10));
+				pstmt2.setString(13,fit(GROUPKEY,150));
+				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+			}
+
+			return RowsAffected;
+	}
+
+	private int deleteFWCMSONLINEPOLICY(String UUID,String INSTYPE,String GROUPKEY) throws Exception{
+
+			String myQuery = "DELETE FROM TB_FWCMS_ONLINE_POLICY "+
+							 "WHERE UUID=? AND INSURANCE_TYPE=? AND GROUP_KEY=?";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1,UUID);
+			pstmt.setString(2,INSTYPE);
+			pstmt.setString(3,GROUPKEY);
+			RowsAffected = pstmt.executeUpdate();
+			pstmt.close();
+
+			if (RowsAffected > 0){
+				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+				pstmt2.setString(1,UUID);
+				pstmt2.setString(2,INSTYPE);
+				pstmt2.setString(3,GROUPKEY);
+				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+			}
+
+			return RowsAffected;
+	}
+
+	/* =====================================================================
 	   G5 — Worker snapshot (TB_FWCMS_ONLINE_WORKER): one row per foreign
 	   worker per product, written from the Bestinet enquiry response so the
 	   guarantee letter's EMPLOYEES PARTICULARS LISTING and nationality
@@ -878,10 +1174,15 @@ public class FWCMSOnline extends DB_Contact{
 			return RowsAffected;
 	}
 
+	/* POLICYREF / POLICYWORKERSEQ tie the worker to its logical policy
+	   (TB_FWCMS_ONLINE_POLICY): together they read as Q00001-001, the
+	   worker's own reference. Blank / 0 when the caller has no policy
+	   grouping to attach — the snapshot is still written. */
 	public int insertFWCMSONLINEWORKER(String UUID,String INSTYPE,int WORKERSEQ,
 								String NAME,String PASSPORT,String NATIONALITY,
 								String NATIONALITYDESCP,String GENDER,
-								String IGAMOUNT,String PREMIUM,String CREATEDBY)
+								String IGAMOUNT,String PREMIUM,String CREATEDBY,
+								String POLICYREF,int POLICYWORKERSEQ)
 								throws Exception{
 
 			String NOW = now();
@@ -907,8 +1208,8 @@ public class FWCMSOnline extends DB_Contact{
 
 			String myQuery = "INSERT INTO TB_FWCMS_ONLINE_WORKER (UUID,INSURANCE_TYPE,WORKER_SEQ,"+
 			                 "NAME,PASSPORT,NATIONALITY,NATIONALITY_DESCP,GENDER,IG_AMOUNT,PREMIUM,"+
-			                 "CREATED_BY,CREATED_DATE)"+
-			                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
+			                 "CREATED_BY,CREATED_DATE,POLICY_REF,POLICY_WORKER_SEQ)"+
+			                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
 			pstmt = myConn.prepareStatement(myQuery);
 			pstmt.setString(1,UUID);
@@ -923,6 +1224,8 @@ public class FWCMSOnline extends DB_Contact{
 			pstmt.setBigDecimal(10,toDecimal(PREMIUM));
 			pstmt.setString(11,CREATEDBY);
 			pstmt.setString(12,NOW);
+			pstmt.setString(13,fit(POLICYREF,20));
+			pstmt.setInt(14,POLICYWORKERSEQ);
 			RowsAffected = pstmt.executeUpdate();
 			pstmt.close();
 
@@ -940,6 +1243,8 @@ public class FWCMSOnline extends DB_Contact{
 				pstmt2.setString(10,toDecimal(PREMIUM).toPlainString());
 				pstmt2.setString(11,CREATEDBY);
 				pstmt2.setString(12,NOW);
+				pstmt2.setString(13,fit(POLICYREF,20));
+				pstmt2.setString(14,String.valueOf(POLICYWORKERSEQ));
 				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
 			}
 
@@ -1121,7 +1426,8 @@ public class FWCMSOnline extends DB_Contact{
 	public ArrayList getFWCMSONLINEWORKERList(String UUID, String INSTYPE) throws Exception{
 
 		String myQuery = "SELECT WORKER_SEQ,NAME,PASSPORT,NATIONALITY,NATIONALITY_DESCP,"+
-						 "GENDER,IG_AMOUNT,PREMIUM FROM TB_FWCMS_ONLINE_WORKER "+
+						 "GENDER,IG_AMOUNT,PREMIUM,POLICY_REF,POLICY_WORKER_SEQ "+
+						 "FROM TB_FWCMS_ONLINE_WORKER "+
 						 "WHERE UUID=? AND INSURANCE_TYPE=? ORDER BY WORKER_SEQ WITH UR";
 
 		ArrayList alWorkers = new ArrayList();
@@ -1139,6 +1445,13 @@ public class FWCMSOnline extends DB_Contact{
 			htWorker.put("GENDER",				nz(rs.getString("GENDER")));
 			htWorker.put("IG_AMOUNT",			nz(rs.getBigDecimal("IG_AMOUNT")));
 			htWorker.put("PREMIUM",				nz(rs.getBigDecimal("PREMIUM")));
+			/* policy linkage (TB_FWCMS_ONLINE_POLICY) — WORKER_REF is the
+			   composed reference the portal shows, Q00001-001 */
+			String POLICYREF = nz(rs.getString("POLICY_REF"));
+			int    POLICYSEQ = rs.getInt("POLICY_WORKER_SEQ");
+			htWorker.put("POLICY_REF",			POLICYREF);
+			htWorker.put("POLICY_WORKER_SEQ",	String.valueOf(POLICYSEQ));
+			htWorker.put("WORKER_REF",			buildWorkerRef(POLICYREF, POLICYSEQ));
 			alWorkers.add(htWorker);
 		}
 		rs.close();

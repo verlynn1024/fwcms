@@ -108,6 +108,59 @@
                         "PREMIUM", SESUSERID, ONLINE_UUID, "I");
                 FWCMSOnline.updateFWCMSONLINETRANSTotal("PREMIUM", SESUSERID, ONLINE_UUID);
 
+                /* Logical policy (TB_FWCMS_ONLINE_POLICY) — FWIG is always ONE
+                   policy covering every FWIG worker for the fixed 18-month
+                   period, so a single group keyed on the product itself. Its
+                   running number (Q00001) is what the worker-detail page shows
+                   as the Policy Ref., and every worker below is stamped with
+                   it plus a per-policy sequence, giving Q00001-001. The group
+                   nationality is kept only while uniform and blanked once a
+                   second one appears — the same rule the page renders by, so
+                   the stored row never claims a nationality it doesn't cover. */
+                String fwigFrom = common.setNullToString((String) session.getAttribute("SES_EFFDATE"));
+                String fwigTo   = "";
+                if (!fwigFrom.equals("")) {
+                    try {
+                        java.text.SimpleDateFormat dfFwig = new java.text.SimpleDateFormat("dd-MM-yyyy");
+                        Calendar calFwig = Calendar.getInstance();
+                        calFwig.setTime(dfFwig.parse(fwigFrom));
+                        calFwig.add(Calendar.MONTH, 18);
+                        calFwig.add(Calendar.DATE, -1);
+                        fwigTo = dfFwig.format(calFwig.getTime());
+                    } catch (Exception e) { fwigTo = ""; }
+                }
+                String  fwigNat    = "";
+                boolean fwigNatSet = false;
+                int     fwigCount  = 0;
+                if (vFwigWorkers != null) {
+                    for (int i = 0; i < vFwigWorkers.size(); i++) {
+                        Vector vItem = (Vector) vFwigWorkers.elementAt(i);
+                        if (vItem == null || vItem.size() <= 8) continue;
+                        fwigCount++;
+                        String sNat = common.setNullToString((String) vItem.elementAt(3));
+                        if (!fwigNatSet)            { fwigNat = sNat; fwigNatSet = true; }
+                        else if (!fwigNat.equals(sNat)) fwigNat = "";
+                    }
+                }
+                Vector vFwigGroups = new Vector();
+                if (fwigCount > 0) {
+                    vFwigGroups.addElement(new String[]{
+                            "FWIG", fwigNat, fwigFrom, fwigTo, String.valueOf(fwigCount),
+                            common.fnGetValue2((float) dSumIns), common.fnGetValue2((float) dGross), "0.00" });
+                }
+                /* Own try/catch: the policy level is additive tracking and must
+                   never cost the premium snapshot below — an environment where
+                   TB_FWCMS_ONLINE_POLICY has not been created yet simply keeps
+                   the workers unlinked, and the page falls back to its previous
+                   reference label. */
+                LinkedHashMap mFwigPolicies = new LinkedHashMap();
+                try {
+                    mFwigPolicies = FWCMSOnline.syncFWCMSONLINEPOLICY(ONLINE_UUID, "I", vFwigGroups, SESUSERID);
+                } catch (Exception ePolicy) {
+                    ePolicy.printStackTrace();
+                }
+                String fwigPolicyRef = common.setNullToString((String) mFwigPolicies.get("FWIG"));
+
                 /* Snapshot the FWIG worker particulars into
                    TB_FWCMS_ONLINE_WORKER so the Guarantee Letter's EMPLOYEES
                    PARTICULARS LISTING (page 2) prints from the database — the
@@ -116,8 +169,10 @@
                    [2]=name [3]=nationality code [4]=gender [5]=passport
                    [7]=IG amount (sum insured) [8]=gross premium. The
                    nationality description is resolved at print time by
-                   FWCMSOnline.getFWIGGLPrintDataOnline. Re-run safe: the
-                   existing rows for this journey/type are cleared first. */
+                   FWCMSOnline.getFWIGGLPrintDataOnline. Each row also carries
+                   its policy reference and its sequence inside that policy.
+                   Re-run safe: the existing rows for this journey/type are
+                   cleared first. */
                 FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "I");
                 if (vFwigWorkers != null) {
                     int workerSeq = 0;
@@ -134,7 +189,8 @@
                                 common.setNullToString((String) vItem.elementAt(4)),  // gender
                                 common.setNullToString((String) vItem.elementAt(7)),  // IG amount
                                 common.setNullToString((String) vItem.elementAt(8)),  // premium
-                                SESUSERID);
+                                SESUSERID,
+                                fwigPolicyRef, workerSeq);                            // Q00001-001
                     }
                 }
             } catch (Exception e) {
@@ -214,21 +270,111 @@
                         "PREMIUM", SESUSERID, ONLINE_UUID, "H");
                 FWCMSOnline.updateFWCMSONLINETRANSTotal("PREMIUM", SESUSERID, ONLINE_UUID);
 
+                /* Logical policies (TB_FWCMS_ONLINE_POLICY) — unlike FWIG, one
+                   FWHS enquiry can carry SEVERAL: a policy is the combination
+                   of (permit Expiry Date + Nationality), and any difference in
+                   either — even a single day — is a separate policy. Grouped
+                   here, in the order the workers arrive, on exactly the key
+                   pop_fwcms_worker_detail.jsp groups by, so the page can match
+                   its rendered rows to these stored ones. Each group gets its
+                   own running number (Q00001, Q00002, Q00003 …) and each
+                   worker its sequence inside its own policy (Q00001-001).
+                   Coverage-from is the block inception date carried per worker
+                   in table_vTable_FWHS_ITM_POL, falling back to the session
+                   effective date; coverage-to is the permit expiry itself.
+                   vItem: [5]gender [6]passport [7]nationality [8]permit expiry
+                   [9]sum insured [10]premium [11]service fee. */
+                Vector vFwhsMeta = (Vector) session.getAttribute("table_vTable_FWHS_ITM_POL");
+                String fwhsEffDate = common.setNullToString((String) session.getAttribute("SES_EFFDATE"));
+                LinkedHashMap mFwhsGroups = new LinkedHashMap();   // key -> [nat, from, to, count, sumIns, gross, svcFee]
+                Vector vFwhsKeys = new Vector();                   // worker index -> its group key
+                if (vFwhsWorkers != null) {
+                    for (int i = 0; i < vFwhsWorkers.size(); i++) {
+                        Vector vItem = (Vector) vFwhsWorkers.elementAt(i);
+                        if (vItem == null || vItem.size() <= 10) { vFwhsKeys.addElement(""); continue; }
+
+                        String sNat    = common.setNullToString((String) vItem.elementAt(7));
+                        String sExpiry = common.setNullToString((String) vItem.elementAt(8));
+                        String sKey    = sExpiry + "|~|" + sNat;
+                        vFwhsKeys.addElement(sKey);
+
+                        String sFrom = fwhsEffDate;
+                        if (vFwhsMeta != null && i < vFwhsMeta.size()) {
+                            Vector vM = (Vector) vFwhsMeta.elementAt(i);
+                            if (vM != null && vM.size() > 0) sFrom = common.setNullToString((String) vM.elementAt(0));
+                        }
+
+                        Vector vG = (Vector) mFwhsGroups.get(sKey);
+                        if (vG == null) {
+                            vG = new Vector();
+                            vG.addElement(sNat);                    //0 nationality
+                            vG.addElement(sFrom);                   //1 coverage from
+                            vG.addElement(sExpiry);                 //2 coverage to (= permit expiry)
+                            vG.addElement(Integer.valueOf(0));      //3 worker count
+                            vG.addElement(Double.valueOf(0));       //4 sum insured
+                            vG.addElement(Double.valueOf(0));       //5 gross premium
+                            vG.addElement(Double.valueOf(0));       //6 service fee
+                            mFwhsGroups.put(sKey, vG);
+                        }
+                        vG.setElementAt(Integer.valueOf(((Integer) vG.elementAt(3)).intValue() + 1), 3);
+                        vG.setElementAt(Double.valueOf(((Double) vG.elementAt(4)).doubleValue()
+                                + common.formatfloat(common.fnCutComma((String) vItem.elementAt(9)))), 4);
+                        vG.setElementAt(Double.valueOf(((Double) vG.elementAt(5)).doubleValue()
+                                + common.formatfloat(common.fnCutComma((String) vItem.elementAt(10)))), 5);
+                        if (vItem.size() > 11) {
+                            vG.setElementAt(Double.valueOf(((Double) vG.elementAt(6)).doubleValue()
+                                    + common.formatfloat(common.fnCutComma((String) vItem.elementAt(11)))), 6);
+                        }
+                    }
+                }
+                Vector vFwhsGroups = new Vector();
+                Iterator itFwhs = mFwhsGroups.keySet().iterator();
+                while (itFwhs.hasNext()) {
+                    String sKey = (String) itFwhs.next();
+                    Vector vG   = (Vector) mFwhsGroups.get(sKey);
+                    vFwhsGroups.addElement(new String[]{
+                            sKey,
+                            (String) vG.elementAt(0), (String) vG.elementAt(1), (String) vG.elementAt(2),
+                            String.valueOf(((Integer) vG.elementAt(3)).intValue()),
+                            common.fnGetValue2(((Double) vG.elementAt(4)).doubleValue()),
+                            common.fnGetValue2(((Double) vG.elementAt(5)).doubleValue()),
+                            common.fnGetValue2(((Double) vG.elementAt(6)).doubleValue()) });
+                }
+                /* Additive, like the FWIG block: a failure here must not cost
+                   the worker snapshot below. */
+                LinkedHashMap mFwhsPolicies = new LinkedHashMap();
+                try {
+                    mFwhsPolicies = FWCMSOnline.syncFWCMSONLINEPOLICY(ONLINE_UUID, "H", vFwhsGroups, SESUSERID);
+                } catch (Exception ePolicy) {
+                    ePolicy.printStackTrace();
+                }
+
                 /* Snapshot the FWHS worker particulars into TB_FWCMS_ONLINE_WORKER
                    (mirrors the FWIG block above) so that (1) the printing module
                    reads the workers DB-first, and (2) issuance can populate
                    TB_FWHSITEM from the database at payment time instead of from
                    session. table_vTable_FWHS_ITM layout (check_fwcms_online.jsp):
                    [2]=name [5]=gender [6]=passport [7]=nationality
-                   [9]=sum insured [10]=premium. Re-run safe: existing rows for
-                   this journey/type are cleared first. */
+                   [9]=sum insured [10]=premium. Each row also carries its policy
+                   reference and its sequence inside that policy. Re-run safe:
+                   existing rows for this journey/type are cleared first. */
                 FWCMSOnline.deleteFWCMSONLINEWORKER(ONLINE_UUID, "H");
                 if (vFwhsWorkers != null) {
                     int workerSeq = 0;
+                    HashMap mPolicySeq = new HashMap();   // policy key -> workers stamped so far
                     for (int i = 0; i < vFwhsWorkers.size(); i++) {
                         Vector vItem = (Vector) vFwhsWorkers.elementAt(i);
                         if (vItem == null || vItem.size() <= 10) continue;
                         workerSeq++;
+
+                        /* the worker's own reference: its policy's number plus
+                           its sequence WITHIN that policy, not within the product */
+                        String sKey       = (String) vFwhsKeys.elementAt(i);
+                        String sPolicyRef = common.setNullToString((String) mFwhsPolicies.get(sKey));
+                        Integer iSeq      = (Integer) mPolicySeq.get(sKey);
+                        int     policySeq = (iSeq == null) ? 1 : iSeq.intValue() + 1;
+                        mPolicySeq.put(sKey, Integer.valueOf(policySeq));
+
                         FWCMSOnline.insertFWCMSONLINEWORKER(
                                 ONLINE_UUID, "H", workerSeq,
                                 common.setNullToString((String) vItem.elementAt(2)),   // name
@@ -238,7 +384,8 @@
                                 common.setNullToString((String) vItem.elementAt(5)),   // gender
                                 common.setNullToString((String) vItem.elementAt(9)),   // sum insured
                                 common.setNullToString((String) vItem.elementAt(10)),  // premium
-                                SESUSERID);
+                                SESUSERID,
+                                sPolicyRef, policySeq);                                // Q00001-001
                     }
                 }
             } catch (Exception e) {
