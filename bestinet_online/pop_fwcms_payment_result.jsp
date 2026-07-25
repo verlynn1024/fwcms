@@ -130,10 +130,24 @@ System.out.println(_sb.toString());
                             + " stage=post-payment-main-table-issuance INSTYPE=" + sInsType
                             + " FAILED - falling back to mock stamp: " + exIssue.getMessage());
                         exIssue.printStackTrace();
-                        FWCMSOnline.updateFWCMSONLINEDTLIssued(
-                            "MCK" + sInsType + sMockSuffix,          /* mock CNCODE    */
-                            "MCKPOL" + sInsType + sMockSuffix,       /* mock POLICY_NO */
-                            sMockIssDate, SESUSERID, FWCMS_UUID, sInsType);
+
+                        /* The fallback stamp is itself a database write, so it can
+                           fail too (this is where a -302 on the DTL columns used to
+                           surface). Contain it: one product that cannot be stamped
+                           must not abort the loop over the other products, nor skip
+                           the journey close below - the payment has already been
+                           taken. */
+                        try {
+                            FWCMSOnline.updateFWCMSONLINEDTLIssued(
+                                "MCK" + sInsType + sMockSuffix,          /* mock CNCODE    */
+                                "MCKPOL" + sInsType + sMockSuffix,       /* mock POLICY_NO */
+                                sMockIssDate, SESUSERID, FWCMS_UUID, sInsType);
+                        } catch (Exception exMock) {
+                            System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
+                                + " stage=post-payment-main-table-issuance INSTYPE=" + sInsType
+                                + " mock stamp ALSO FAILED: " + exMock.getMessage());
+                            exMock.printStackTrace();
+                        }
                     }
                 }
 

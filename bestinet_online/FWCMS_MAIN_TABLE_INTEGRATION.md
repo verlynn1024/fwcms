@@ -144,6 +144,96 @@ UPDATE TB_TRANSACTION SET CLIENTID='0'
 (`'0'` only stops the -420; to make those quotations visible again they must be
 re-pointed at the real `TB_CONTACT.AUTONUM` of their employer.)
 
+### 4.2 Bound values must fit their column (DB2 -302 / SQLSTATE 22001)
+
+DB2 describes every parameter marker with the **type and length of the column
+it feeds**, and the JDBC driver rejects a longer host variable at `EXECUTE` /
+`OPEN` time:
+
+```
+SQLCODE=-302, SQLSTATE=22001
+The value of a host variable in the EXECUTE or OPEN statement is out of range
+for its corresponding use.
+```
+
+The whole statement fails, however small the overflow, and the error names no
+column — so the log tells you nothing about which field was too long.
+
+Post-payment this is the worst possible failure. The customer has paid, the
+class tables are written, and the statement that blows up is the one that makes
+the policy printable:
+
+```
+payment_result.jsp
+  -> DB_FWHS.fnGetUWYRVector()            [executeQuery]  -302, swallowed
+  -> FWCMSOnline.updateFWCMSONLINEDTLIssued()  [executeUpdate]  -302, fatal
+  -> FWCMSPRINT stage=...-issuance FAILED   ->  no printable policies
+```
+
+Two independent exposures, handled separately.
+
+**a) The stamp-back onto `TB_FWCMS_ONLINE_DTL`.** The portal's own columns are
+narrower than the legacy ones they mirror — `TB_FWHSCN.UKEY` is `VARCHAR(100)`
+and `TB_FWHSCN.CNCODE` is `VARCHAR(50)`, but `TB_FWCMS_ONLINE_DTL.CNCODE` is
+`VARCHAR(30)`; `NO_WORKER` is `VARCHAR(5)`; `EFF_DATE` / `EXP_DATE` /
+`ISS_DATE` are `CHAR(8)`; every `UPDATED_BY` / `CREATED_BY` is `VARCHAR(20)`.
+The values come from cover-note generators, the Bestinet response and the
+session — none of them sized by this schema.
+
+Every character value bound to `TB_FWCMS_ONLINE` / `_DTL` / `_WORKER` now goes
+through `FWCMSOnline.fit("<COLUMN>", value, <width>)`, with the widths taken
+from the describes in `existing database.sql`. An oversized value costs a
+truncated column and a log line that **names the column and prints the value**,
+instead of a failed issuance:
+
+```
+[FWCMSONLINE] TRUNCATED CNCODE 33 -> 30 chars (DB2 -302 guard); value=[...] stored=[...]
+```
+
+The date columns use `fitDate8()`, which strips non-digits first, so a
+`"2026-07-25"` or a 14-char `yyyyMMddHHmmss` stamp becomes `20260725` rather
+than a blindly-cut `2026-07-`. `null` still passes through as SQL NULL (§ the
+`emptyToNull` contract). The guard already existed for
+`TB_FWCMS_ONLINE_WORKER` — where the enquiry's `"<code> <description>"`
+nationality overflowed `VARCHAR(10)` — and is simply applied consistently now.
+
+**b) `TB_PROC_UW` underwriting-year lookup.** `DB_FWIG` / `DB_FWHS`
+`fnGetUWYRVector(ISSDATE, PRINCIPLE)` binds the insurer code and the `yyyyMMdd`
+issue date against `INSCODE` / `START_DATE` / `END_DATE`. Where those columns
+are narrower than the values passed, the predicate does not simply compare
+false — the driver raises -302 before the query runs. Those DAOs catch it,
+print the stack trace and return an empty `Vector`, so issuance survives, but
+the cover note would then be written with a blank underwriting period.
+
+The DAOs are shared legacy code and are not modified. Instead the caller
+(`FWCMSOnline.uwYearMonth()`) treats "no row" and "lookup failed" alike and
+falls back to the issue date's own year / month — what `TB_PROC_UW` holds for
+an ordinary calendar-aligned period — logging when it does:
+
+```
+[FWCMSONLINE] TB_PROC_UW gave no underwriting year for ISSDATE=20260725
+ (no matching period, or the lookup failed with -302) - defaulting UWYR_YR/UWYR_MTH to 2026/07
+```
+
+**c) The mock fallback is itself a database write.** `pop_fwcms_payment_result.jsp`
+falls back to an `MCK-` stamp when issuance throws; that stamp is now wrapped in
+its own `try/catch`, so one product that cannot be stamped can neither abort the
+loop over the other products nor skip the journey close.
+
+To confirm the deployed widths against the values a failing journey carried:
+
+```sql
+SELECT COLNAME, TYPENAME, LENGTH FROM SYSCAT.COLUMNS
+ WHERE TABSCHEMA = CURRENT SCHEMA AND TABNAME IN
+       ('TB_FWCMS_ONLINE','TB_FWCMS_ONLINE_DTL','TB_FWCMS_ONLINE_WORKER','TB_PROC_UW')
+ ORDER BY TABNAME, COLNO;
+```
+
+A column that is genuinely too narrow for its business value should be widened
+by migration rather than left to truncate — the `TRUNCATED` log lines are the
+list of candidates, and `CNCODE` in particular is the printing module's linkage
+(`WHERE UKEY = <DTL.CNCODE>`), so a truncated one loses the print join.
+
 ## 4. Column contract (how the target columns were verified)
 
 Every column written is verified against **two** independent sources so the

@@ -52,6 +52,14 @@ public class FWCMSOnline extends DB_Contact{
 
 		/* REFNO (Application No., Bestinet plksNumber) is unknown until the
 		   enquiry response arrives — set by updateFWCMSONLINETRANSEnquiry. */
+		UUID           = fit("UUID", UUID, 36);
+		ACCODE         = fit("ACCODE", ACCODE, 20);
+		USERID         = fit("USERID", USERID, 20);
+		BUSINESSNO     = fit("BUSINESS_NO", BUSINESSNO, 30);
+		TRANSSTATUS    = fit("TRANS_STATUS", TRANSSTATUS, 1);
+		PURCHASESTATUS = fit("PURCHASE_STATUS", PURCHASESTATUS, 20);
+		CREATEDBY      = fit("CREATED_BY", CREATEDBY, 20);
+
 		String NOW = now();
 		String myQuery = "INSERT INTO TB_FWCMS_ONLINE (UUID,ACCODE,USERID,BUSINESS_NO,"+
 		                 "ENTRY_TIMESTAMP,TRANS_STATUS,PURCHASE_STATUS,CREATED_BY,CREATED_DATE)"+
@@ -116,6 +124,19 @@ public class FWCMSOnline extends DB_Contact{
 								String IMMICODE,String IMMIDESCP,String UPDATEDBY,String UUID)
 								throws Exception{
 
+			/* Everything here arrives from the Bestinet enquiry response —
+			   free text sized by the far end, not by this schema. */
+			REFNO                = fit("REFNO", REFNO, 60);
+			EMPLOYERROC          = fit("EMPLOYER_ROC", EMPLOYERROC, 30);
+			EMPLOYERPHONE        = fit("EMPLOYER_PHONE", EMPLOYERPHONE, 30);
+			EMPLOYEREMAIL        = fit("EMPLOYER_EMAIL", EMPLOYEREMAIL, 100);
+			NATUREBUSINESS       = fit("NATURE_BUSINESS", NATUREBUSINESS, 10);
+			NATUREBUSINESSDESCP  = fit("NATURE_BUSINESS_DESCP", NATUREBUSINESSDESCP, 200);
+			IMMICODE             = fit("IMMI_CODE", IMMICODE, 10);
+			IMMIDESCP            = fit("IMMI_DESCP", IMMIDESCP, 200);
+			UPDATEDBY            = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID                 = fit("UUID", UUID, 36);
+
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET REFNO=?,EMPLOYER_ROC=?,EMPLOYER_PHONE=?,"+
 							  "EMPLOYER_EMAIL=?,NATURE_BUSINESS=?,NATURE_BUSINESS_DESCP=?,"+
@@ -169,6 +190,11 @@ public class FWCMSOnline extends DB_Contact{
 								String UPDATEDBY,String UUID)
 								throws Exception{
 
+			IMMICODE  = fit("IMMI_CODE", IMMICODE, 10);
+			IMMIDESCP = fit("IMMI_DESCP", IMMIDESCP, 200);
+			UPDATEDBY = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID      = fit("UUID", UUID, 36);
+
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET IMMI_CODE=?,IMMI_DESCP=?,"+
 							  "UPDATED_BY=?,UPDATED_DATE=? WHERE UUID=?";
@@ -198,6 +224,10 @@ public class FWCMSOnline extends DB_Contact{
 	   database so parent and DTL rows can never drift apart. */
 	public int updateFWCMSONLINETRANSTotal(String PURCHASESTATUS,String UPDATEDBY,String UUID)
 								throws Exception{
+
+			PURCHASESTATUS = fit("PURCHASE_STATUS", PURCHASESTATUS, 20);
+			UPDATEDBY      = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID           = fit("UUID", UUID, 36);
 
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET "+
@@ -232,6 +262,14 @@ public class FWCMSOnline extends DB_Contact{
 	public int updateFWCMSONLINETRANSPayment(String PAYMENTSTATUS,String PAYMENTREF,
 								String PAYMENTMETHOD,String UPDATEDBY,String UUID)
 								throws Exception{
+
+			/* PAYMENT_REF is whatever the gateway returns — a long gateway
+			   token must not cost the journey its PAID stamp. */
+			PAYMENTSTATUS = fit("PAYMENT_STATUS", PAYMENTSTATUS, 10);
+			PAYMENTREF    = fit("PAYMENT_REF", PAYMENTREF, 60);
+			PAYMENTMETHOD = fit("PAYMENT_METHOD", PAYMENTMETHOD, 12);
+			UPDATEDBY     = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID          = fit("UUID", UUID, 36);
 
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET "+
@@ -271,6 +309,13 @@ public class FWCMSOnline extends DB_Contact{
 	public int insertFWCMSONLINEDTL(String UUID,String INSTYPE,String REFNO,
 								 String REQTIMESTAMP,String INSSTATUS,String CREATEDBY)
 								 throws Exception{
+
+		UUID         = fit("UUID", UUID, 36);
+		INSTYPE      = fit("INSURANCE_TYPE", INSTYPE, 10);
+		REFNO        = fit("REFNO", REFNO, 60);
+		REQTIMESTAMP = fit("REQ_TIMESTAMP", REQTIMESTAMP, 14);
+		INSSTATUS    = fit("INS_STATUS", INSSTATUS, 20);
+		CREATEDBY    = fit("CREATED_BY", CREATEDBY, 20);
 
 		String NOW = now();
 		String myQuery = "INSERT INTO TB_FWCMS_ONLINE_DTL (UUID,INSURANCE_TYPE,REFNO,"+
@@ -313,6 +358,13 @@ public class FWCMSOnline extends DB_Contact{
 								String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
 
+			REFNO        = fit("REFNO", REFNO, 60);
+			REQTIMESTAMP = fit("REQ_TIMESTAMP", REQTIMESTAMP, 14);
+			INSSTATUS    = fit("INS_STATUS", INSSTATUS, 20);
+			UPDATEDBY    = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID         = fit("UUID", UUID, 36);
+			INSTYPE      = fit("INSURANCE_TYPE", INSTYPE, 10);
+
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET REFNO=?,REQ_TIMESTAMP=?,INS_STATUS=?,"+
 							  "ERROR_CODE=NULL,ERROR_MSG=NULL,UPDATED_BY=?,UPDATED_DATE=? "+
@@ -348,6 +400,15 @@ public class FWCMSOnline extends DB_Contact{
 								throws Exception{
 
 			//UPDATE FWCMS ONLINE DTL RESPONSE RECORDS (SUCCESSFUL ENQUIRY)
+			/* NO_WORKER is a 5-char column and BTN_TRANS_REF is the far end's
+			   own reference — both come straight from the enquiry response. */
+			BTNTRANSREF   = fit("BTN_TRANS_REF", BTNTRANSREF, 60);
+			RESPTIMESTAMP = fit("RESP_TIMESTAMP", RESPTIMESTAMP, 14);
+			NO_OF_WORKER  = fit("NO_WORKER", NO_OF_WORKER, 5);
+			UPDATEDBY     = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID          = fit("UUID", UUID, 36);
+			INSTYPE       = fit("INSURANCE_TYPE", INSTYPE, 10);
+
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET BTN_TRANS_REF=?,RESP_TIMESTAMP=?,NO_WORKER=?,"+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
@@ -387,6 +448,11 @@ public class FWCMSOnline extends DB_Contact{
 								String SERVICETAX,String STAMPDUTY,String SERVICEFEE,String NETPREM,
 								String INSSTATUS,String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
+
+			INSSTATUS = fit("INS_STATUS", INSSTATUS, 20);
+			UPDATEDBY = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID      = fit("UUID", UUID, 36);
+			INSTYPE   = fit("INSURANCE_TYPE", INSTYPE, 10);
 
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET SUM_INSURED=?,GROSS_PREMIUM=?,REBATE_AMT=?,"+
@@ -434,6 +500,16 @@ public class FWCMSOnline extends DB_Contact{
 								throws Exception{
 
 			//UPDATE FWCMS ONLINE DTL RESPONSE RECORDS (FAILED / DECLINED ATTEMPT)
+			/* The error stamp is the last chance to record why an attempt
+			   failed — a long gateway message must not sink it as well. */
+			INSSTATUS     = fit("INS_STATUS", INSSTATUS, 20);
+			ERRORCODE     = fit("ERROR_CODE", ERRORCODE, 10);
+			ERRORMSG      = fit("ERROR_MSG", ERRORMSG, 1000);
+			RESPTIMESTAMP = fit("RESP_TIMESTAMP", RESPTIMESTAMP, 14);
+			UPDATEDBY     = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID          = fit("UUID", UUID, 36);
+			INSTYPE       = fit("INSURANCE_TYPE", INSTYPE, 10);
+
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET INS_STATUS=?,ERROR_CODE=?,ERROR_MSG=?,RESP_TIMESTAMP=?,"+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
@@ -495,13 +571,15 @@ public class FWCMSOnline extends DB_Contact{
 								String UPDATEDBY,String UUID)
 								throws Exception{
 
-			EMPLOYERNAME	= emptyToNull(EMPLOYERNAME);
-			ADDRESS1		= emptyToNull(ADDRESS1);
-			ADDRESS2		= emptyToNull(ADDRESS2);
-			ADDRESS3		= emptyToNull(ADDRESS3);
-			ADDRESS4		= emptyToNull(ADDRESS4);
-			POSTCODE		= emptyToNull(POSTCODE);
-			STATE			= emptyToNull(STATE);
+			EMPLOYERNAME	= fit("EMPLOYER_NAME", emptyToNull(EMPLOYERNAME), 120);
+			ADDRESS1		= fit("EMPLOYER_ADDRESS_1", emptyToNull(ADDRESS1), 100);
+			ADDRESS2		= fit("EMPLOYER_ADDRESS_2", emptyToNull(ADDRESS2), 100);
+			ADDRESS3		= fit("EMPLOYER_ADDRESS_3", emptyToNull(ADDRESS3), 100);
+			ADDRESS4		= fit("EMPLOYER_ADDRESS_4", emptyToNull(ADDRESS4), 100);
+			POSTCODE		= fit("EMPLOYER_POSTCODE", emptyToNull(POSTCODE), 10);
+			STATE			= fit("EMPLOYER_STATE", emptyToNull(STATE), 30);
+			UPDATEDBY		= fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID			= fit("UUID", UUID, 36);
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET EMPLOYER_NAME=?,EMPLOYER_ADDRESS_1=?,"+
 							  "EMPLOYER_ADDRESS_2=?,EMPLOYER_ADDRESS_3=?,EMPLOYER_ADDRESS_4=?,"+
@@ -549,7 +627,9 @@ public class FWCMSOnline extends DB_Contact{
 								String UPDATEDBY,String UUID)
 								throws Exception{
 
-			IMMIADDRESS = emptyToNull(IMMIADDRESS);
+			IMMIADDRESS = fit("IMMI_ADDRESS", emptyToNull(IMMIADDRESS), 500);
+			UPDATEDBY   = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID        = fit("UUID", UUID, 36);
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET IMMI_ADDRESS=?,"+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
@@ -581,8 +661,11 @@ public class FWCMSOnline extends DB_Contact{
 								String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
 
-			EFFDATE = emptyToNull(EFFDATE);
-			EXPDATE = emptyToNull(EXPDATE);
+			EFFDATE   = fitDate8("EFF_DATE", emptyToNull(EFFDATE));
+			EXPDATE   = fitDate8("EXP_DATE", emptyToNull(EXPDATE));
+			UPDATEDBY = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID      = fit("UUID", UUID, 36);
+			INSTYPE   = fit("INSURANCE_TYPE", INSTYPE, 10);
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET EFF_DATE=?,EXP_DATE=?,"+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
@@ -620,7 +703,20 @@ public class FWCMSOnline extends DB_Contact{
 								String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
 
-			ISSDATE = emptyToNull(ISSDATE);
+			/* The class-table key (CNCODE / UKEY) and the policy number are
+			   generated by the legacy cover-note generators into columns far
+			   wider than the portal's own (TB_FWHSCN.UKEY is VARCHAR(100),
+			   TB_FWCMS_ONLINE_DTL.CNCODE is VARCHAR(30)), and the acting
+			   user comes from the session — so every value here is fitted to
+			   the DTL column before binding. This is the statement the
+			   post-payment issuance leg died on with -302. */
+			CNCODE    = fit("CNCODE", CNCODE, 30);
+			POLICYNO  = fit("POLICY_NO", POLICYNO, 30);
+			ISSDATE   = fitDate8("ISS_DATE", emptyToNull(ISSDATE));
+			UPDATEDBY = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID      = fit("UUID", UUID, 36);
+			INSTYPE   = fit("INSURANCE_TYPE", INSTYPE, 10);
+
 			String NOW = now();
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET CNCODE=?,POLICY_NO=?,ISS_DATE=?,INS_STATUS='ISSUED',"+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
@@ -661,6 +757,10 @@ public class FWCMSOnline extends DB_Contact{
 
 			String NOW = now();
 			boolean terminal = "S".equals(TRANSSTATUS) || "C".equals(TRANSSTATUS) || "F".equals(TRANSSTATUS);
+			TRANSSTATUS    = fit("TRANS_STATUS", TRANSSTATUS, 1);
+			PURCHASESTATUS = fit("PURCHASE_STATUS", PURCHASESTATUS, 20);
+			UPDATEDBY      = fit("UPDATED_BY", UPDATEDBY, 20);
+			UUID           = fit("UUID", UUID, 36);
 			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET TRANS_STATUS=?,PURCHASE_STATUS=?,"+
 							  (terminal ? "EXIT_TIMESTAMP=?," : "")+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
@@ -738,14 +838,14 @@ public class FWCMSOnline extends DB_Contact{
 			   (check_fwcms_online.jsp rewrites it to NATIONALITY||' '||DESCP),
 			   but the column is a 10-char code and resolveFWIGNationality keys
 			   on the bare code, so keep only the leading code. */
-			UUID              = fit(UUID, 36);
-			INSTYPE           = fit(INSTYPE, 10);
-			NAME              = fit(NAME, 120);
-			PASSPORT          = fit(PASSPORT, 30);
-			NATIONALITY       = fit(natCode(NATIONALITY), 10);
-			NATIONALITYDESCP  = fit(NATIONALITYDESCP, 100);
-			GENDER            = fit(GENDER, 2);
-			CREATEDBY         = fit(CREATEDBY, 20);
+			UUID              = fit("UUID", UUID, 36);
+			INSTYPE           = fit("INSURANCE_TYPE", INSTYPE, 10);
+			NAME              = fit("NAME", NAME, 120);
+			PASSPORT          = fit("PASSPORT", PASSPORT, 30);
+			NATIONALITY       = fit("NATIONALITY", natCode(NATIONALITY), 10);
+			NATIONALITYDESCP  = fit("NATIONALITY_DESCP", NATIONALITYDESCP, 100);
+			GENDER            = fit("GENDER", GENDER, 2);
+			CREATEDBY         = fit("CREATED_BY", CREATEDBY, 20);
 
 			String myQuery = "INSERT INTO TB_FWCMS_ONLINE_WORKER (UUID,INSURANCE_TYPE,WORKER_SEQ,"+
 			                 "NAME,PASSPORT,NATIONALITY,NATIONALITY_DESCP,GENDER,IG_AMOUNT,PREMIUM,"+
@@ -788,12 +888,41 @@ public class FWCMSOnline extends DB_Contact{
 			return RowsAffected;
 	}
 
-	/* Clamp a character value to its DB2 column width so an oversized host
-	   variable can never raise SQLCODE -302 on INSERT/UPDATE. Null passes
-	   through untouched (bound as SQL NULL). */
-	private String fit(String s,int max){
-		if (s == null) return null;
-		return (s.length() > max) ? s.substring(0,max) : s;
+	/* ── DB2 -302 guard ──────────────────────────────────────────────────
+	   DB2 describes every parameter marker with the type and length of the
+	   column it feeds, and the driver rejects a longer host variable at
+	   EXECUTE / OPEN time with SQLCODE=-302 (SQLSTATE 22001) — the whole
+	   statement fails, however small the overflow. On the post-payment legs
+	   that is fatal to a transaction the customer has already paid for: the
+	   class tables are written, and the DTL stamp that makes the policy
+	   printable is the statement that blows up, so the result page loads no
+	   printable policy at all.
+
+	   Every character value bound to TB_FWCMS_ONLINE / _DTL / _WORKER
+	   therefore goes through fit() first, with the width taken from the
+	   describes in "existing database.sql". An oversized value now costs a
+	   truncated column and a named log line instead of a failed issuance,
+	   and the log line says which column and what value — which the bare
+	   -302 never does. Null passes through untouched (bound as SQL NULL). */
+	private String fit(String sColumn,String sValue,int iWidth){
+		if (sValue == null) return null;
+		if (sValue.length() <= iWidth) return sValue;
+		String sCut = sValue.substring(0,iWidth);
+		System.out.println("[FWCMSONLINE] TRUNCATED "+sColumn+" "+sValue.length()+" -> "+iWidth
+			+" chars (DB2 -302 guard); value=["+sValue+"] stored=["+sCut+"]");
+		return sCut;
+	}
+
+	/* EFF_DATE / EXP_DATE / ISS_DATE are CHAR(8) yyyyMMdd. A caller that
+	   hands over "2026-07-25" or a 14-char yyyyMMddHHmmss stamp would either
+	   raise -302 or, truncated blindly, store "2026-07-" — so strip the
+	   non-digits first and keep the leading 8, which turns both shapes into
+	   the intended date. Anything else falls back to fit() and is logged. */
+	private String fitDate8(String sColumn,String sValue){
+		if (sValue == null) return null;
+		String sDigits = sValue.replaceAll("[^0-9]","");
+		if (sDigits.length() >= 8) return sDigits.substring(0,8);
+		return fit(sColumn,sValue,8);
 	}
 
 	/* NATIONALITY is stored as a bare code (VARCHAR 10); the enquiry vector
@@ -1024,6 +1153,37 @@ public class FWCMSOnline extends DB_Contact{
 	   ("1234.00", "" when NULL) — parse for the double-typed DAO params. */
 	private double toDouble(String sValue){
 		return toDecimal(sValue).doubleValue();
+	}
+
+	/* Underwriting year / month for the cover note (TB_FWIGCN / TB_FWHSCN
+	   UWYR_YR, UWYR_MTH), read from TB_PROC_UW by the legacy DAOs.
+
+	   DB_FWIG / DB_FWHS.fnGetUWYRVector binds the insurer code and the issue
+	   date as host variables, and DB2 sizes a parameter marker from the
+	   column it is compared against: a value wider than TB_PROC_UW's own
+	   INSCODE / START_DATE / END_DATE definition is rejected by the driver at
+	   OPEN time with SQLCODE=-302 (SQLSTATE 22001) rather than simply not
+	   matching. That is the -302 the post-payment issuance leg logs out of
+	   fnGetUWYRVector. Those DAOs swallow it and return an empty Vector, so
+	   issuance itself survives — but the cover note would then be written
+	   with a blank underwriting period, which the class-table reports key on.
+
+	   So treat "no row" and "lookup failed" alike and fall back to the issue
+	   date's own year / month, which is what TB_PROC_UW holds for an ordinary
+	   calendar-aligned underwriting period. Returns { YR, MTH }. */
+	private String[] uwYearMonth(Vector vUWYR,String sISSDATE){
+		String sYR  = (vUWYR != null && vUWYR.size() > 0) ? nz((String)vUWYR.elementAt(0)).trim() : "";
+		String sMTH = (vUWYR != null && vUWYR.size() > 1) ? nz((String)vUWYR.elementAt(1)).trim() : "";
+
+		if (sYR.equals("") && sISSDATE != null && sISSDATE.length() >= 6){
+			sYR  = sISSDATE.substring(0,4);
+			sMTH = sISSDATE.substring(4,6);
+			System.out.println("[FWCMSONLINE] TB_PROC_UW gave no underwriting year for ISSDATE="
+				+ sISSDATE + " (no matching period, or the lookup failed with -302)"
+				+ " - defaulting UWYR_YR/UWYR_MTH to " + sYR + "/" + sMTH);
+		}
+
+		return new String[]{ sYR, sMTH };
 	}
 
 	/* Issue one product of a journey into the FWCMS main class tables.
@@ -1271,9 +1431,9 @@ public class FWCMSOnline extends DB_Contact{
 			}
 			sUKEY = PRINCIPLE + CNCODE;
 
-			Vector vUWYR = dbFWIG.fnGetUWYRVector(ISSDATE, PRINCIPLE);
-			String UWYR_YR  = vUWYR.size() > 0 ? (String)vUWYR.elementAt(0) : "";
-			String UWYR_MTH = vUWYR.size() > 1 ? (String)vUWYR.elementAt(1) : "";
+			String[] saUWYR = uwYearMonth(dbFWIG.fnGetUWYRVector(ISSDATE, PRINCIPLE), ISSDATE);
+			String UWYR_YR  = saUWYR[0];
+			String UWYR_MTH = saUWYR[1];
 
 			/* 1. TB_TRANSACTION — class IG, type CN, CNSTATUS='SAVED' */
 			dbFWIG.insert_transaction("IG", "CN", USERID, NOW14, CLIENTID, "N",
@@ -1422,9 +1582,9 @@ public class FWCMSOnline extends DB_Contact{
 			}
 			sUKEY = PRINCIPLE + CNCODE;
 
-			Vector vUWYR = dbFWHS.fnGetUWYRVector(ISSDATE, PRINCIPLE);
-			String UWYR_YR  = vUWYR.size() > 0 ? (String)vUWYR.elementAt(0) : "";
-			String UWYR_MTH = vUWYR.size() > 1 ? (String)vUWYR.elementAt(1) : "";
+			String[] saUWYR = uwYearMonth(dbFWHS.fnGetUWYRVector(ISSDATE, PRINCIPLE), ISSDATE);
+			String UWYR_YR  = saUWYR[0];
+			String UWYR_MTH = saUWYR[1];
 
 			/* 1. TB_TRANSACTION — class FWHS, type CN, status SAVED */
 			dbFWHS.insert_transaction("FWHS", "CN", USERID, NOW14, CLIENTID, "N",
