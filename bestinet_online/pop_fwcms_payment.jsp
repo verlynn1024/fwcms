@@ -12,15 +12,15 @@
 		response.sendRedirect("../login/logout.jsp");
     }
 
-    /* ── Database insertion happens BEFORE this page ────────────────
-       Issuance into the FWCMS MAIN class tables (and persistence of the
-       chosen immigration branch) is done by pop_fwcms_worker_detail_rep.jsp,
-       the data-handling endpoint the worker-detail page POSTs to just before
-       redirecting here. By the time the payment page loads, every product
-       already carries its real cover note / policy number, so this page only
-       collects the card details and forwards to the gateway. The payment leg
-       (PAID stamp) and journey close are applied afterwards, on
-       pop_fwcms_payment_result.jsp. */
+    /* ── Quotation is issued AFTER payment, not on this page ────────────
+       Before this page, pop_fwcms_worker_detail_rep.jsp persists the chosen
+       immigration branch onto the TB_FWCMS_ONLINE tracking row (leaving all
+       the other pre-payment TB_FWCMS_ONLINE_* tracking writes untouched). No
+       quotation exists yet: this page only collects the card details and
+       forwards to the gateway. Quotation issuance into the FWCMS MAIN class
+       tables and cover-note (CNCODE) generation — together with the PAID stamp
+       and journey close — are applied afterwards, only on a successful
+       payment, by pop_fwcms_payment_result.jsp. */
 
     /* ── Payment result flag ────────────────────────────────────
        Gateway posts back PAYMENT=Y on approval, PAYMENT=F on decline.

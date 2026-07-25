@@ -1,8 +1,10 @@
 # FWCMS Main-Table Integration — Bestinet Online Portal
 
-**Status:** implemented (issuance runs **before** the payment gateway, in the
-worker-detail data-handling endpoint `pop_fwcms_worker_detail_rep.jsp`, with a
-mock fallback for environments where the cover-note series is not yet seeded).
+**Status:** implemented (quotation issuance runs **after a successful payment**,
+in the payment result page `pop_fwcms_payment_result.jsp`, with a mock fallback
+for environments where the cover-note series is not yet seeded). The pre-payment
+`TB_FWCMS_ONLINE` / `TB_FWCMS_ONLINE_*` tracking writes are unchanged; only the
+quotation (class-table) generation was moved to after payment.
 
 ## 1. The problem this solves
 
@@ -108,19 +110,22 @@ FWCMS → eCover
   ── worker-detail page → "Make Payment" ──────────────
   POST pop_fwcms_worker_detail_rep.jsp (BEFORE the gateway):
     Stamp chosen immigration branch onto TB_FWCMS_ONLINE
-    Insert into existing MAIN tables   ◄── NEW (pre-payment)
-    Insert XML transaction records     ◄── (online DTL stamped with real CN)
-    Generate cover note                ◄── real CNCODE / POLNO
+    (no quotation / class-table write here — tracking only)
   ── (redirect to payment gateway) ────────────────────
-  ── (payment confirmed, result page) ─────────────────
-  Stamp payment PAID + close journey ISSUED
+  ── (payment confirmed SUCCESS, result page) ─────────
+  POST pop_fwcms_payment_result.jsp (AFTER the gateway):
+    Stamp payment PAID
+    Insert into existing MAIN tables   ◄── NEW (post-payment)
+    Generate cover note                ◄── real CNCODE / POLNO
+    Stamp CNCODE back onto online DTL
+    Close journey ISSUED
   Proceed to printing                ◄── reads a real class-table policy
 ```
 
-This ordering matches the legacy eCover flow, where "Save cover note" (the
-class-table insert) precedes payment. The database insertion is therefore done
-**before** the user enters the payment gateway; the result page only confirms
-the payment leg and closes the journey.
+The business requirement is that a quotation exists **only after** the payment
+succeeds. The database insertion is therefore done **after** the gateway
+confirms payment, on the result page; the pre-gateway endpoint only records
+portal tracking (and the chosen immigration branch) into `TB_FWCMS_ONLINE`.
 
 ### Immigration branch selection
 
@@ -157,26 +162,31 @@ public String issueMainTables(String UUID, String INSTYPE, String USERID)
 4. stamps the generated `CNCODE` / `POLNO` back onto the online DTL row via
    `updateFWCMSONLINEDTLIssued`, preserving the `UUID` linkage.
 
-### Entry point: `pop_fwcms_worker_detail_rep.jsp` (before the gateway)
+### Pre-gateway endpoint: `pop_fwcms_worker_detail_rep.jsp` (tracking only)
 
 The worker-detail page (`pop_fwcms_worker_detail.jsp`) is a pure view; on "Make
-Payment" it POSTs to `pop_fwcms_worker_detail_rep.jsp`, which does all the data
-handling and only then does the page redirect to `pop_fwcms_payment.jsp`. The
-endpoint first stamps the chosen immigration branch (above), then loops the
-journey's products and calls `FWCMSOnline.issueMainTables(UUID, INSTYPE, USERID)`
-per product. The loop is idempotent (products already issued with a real,
-non-`MCK` cover note are skipped), so retrying never re-inserts. On success the
-printing module has a real policy to render. If issuance throws (e.g. the
-cover-note series is not seeded in this environment), the product falls back to
-the previous `MCK…` mock stamp so the portal still renders — the `MCK` prefix
-makes fallbacks easy to find and purge.
+Payment" it POSTs to `pop_fwcms_worker_detail_rep.jsp`, which does the
+pre-gateway data handling and only then does the page redirect to
+`pop_fwcms_payment.jsp`. The endpoint stamps the chosen immigration branch onto
+the journey's `TB_FWCMS_ONLINE` tracking row (above) so it is available when the
+quotation is later issued. It **no longer** issues the quotation — the
+`FWCMSOnline.issueMainTables` loop was moved out of this endpoint to the payment
+result page, so no `CNCODE` and no class-table rows exist until payment succeeds.
 
-### Result page: `pop_fwcms_payment_result.jsp` (after the gateway)
+### Result page: `pop_fwcms_payment_result.jsp` (after a successful payment)
 
-The result page no longer inserts into the class tables. Once the (mocked)
-gateway confirms the payment, it only stamps the payment leg PAID
-(`updateFWCMSONLINETRANSPayment`) and closes the journey Success/ISSUED
-(`updateFWCMSONLINETRANSStatus`).
+Quotation issuance now lives here. When the gateway confirms `PAYMENT` success
+the page, in order: stamps the payment leg PAID
+(`updateFWCMSONLINETRANSPayment`); loops the journey's products and calls
+`FWCMSOnline.issueMainTables(UUID, INSTYPE, USERID)` per product — inserting the
+class-table rows and generating the real `CNCODE` via `DB_FWIG` / `DB_FWHS`, then
+stamping it back onto the online DTL row; and finally closes the journey
+Success/ISSUED (`updateFWCMSONLINETRANSStatus`). The loop is idempotent (products
+already issued with a real, non-`MCK` cover note are skipped), so a page reload
+never re-issues or re-numbers. If issuance throws (e.g. the cover-note series is
+not seeded in this environment), the product falls back to a `MCK…` mock stamp so
+the portal still renders — the `MCK` prefix makes fallbacks easy to find and
+purge. A failed payment (`PAYMENT=F`) issues nothing.
 
 ### Supporting change: `pop_fwcms_capturePremium.jsp`
 
@@ -199,8 +209,14 @@ User → eCover JSP                          Bestinet → check_fwcms_online.jsp
         │                                       TB_FWCMS_ONLINE_WORKER (tracking)
         │                                          │
         │                                     worker_detail_rep.jsp (BEFORE gateway)
+        │                                       stamp immigration branch only
+        │                                       (TB_FWCMS_ONLINE tracking)
+        │                                          │
+        │                                     ── payment gateway ──
+        │                                          │
+        │                                     payment_result.jsp (payment SUCCESS)
+        │                                       PAID stamp
         │                                       FWCMSOnline.issueMainTables()
-        │                                          │  (controller)
         ▼                                          ▼  delegates to beans
   ┌─────────────────────┐                   ┌─────────────────────┐
   │ insert_transaction  │◄────── SAME ──────│ DB_FWIG/DB_FWHS      │
@@ -215,11 +231,7 @@ User → eCover JSP                          Bestinet → check_fwcms_online.jsp
   TB_FWHSCN / TB_FWHSSCH / TB_FWHSITEM              │
   TB_TRANSACTION                                    ▼
         │                              updateFWCMSONLINEDTLIssued (real CN/POLNO)
-        │                                            │
-        │                                     ── payment gateway ──
-        │                                            │
-        │                                     payment_result.jsp (AFTER gateway)
-        │                                       PAID stamp + journey ISSUED
+        │                                       + journey ISSUED
         ▼                                            │
    Printing / Enquiry / Cancellation / Endorsement / Reporting
    (both flows now converge on the same class tables)
