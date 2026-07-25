@@ -315,6 +315,19 @@ first use, so no manual seeding is required:
 The code still degrades to the `MCK…` mock stamp if either generator (or any
 class-table insert) throws.
 
+**DDL that must be applied** (unlike the counters above, this one is not
+self-creating): `MIGRATE_FWCMS_ONLINE_REFERENCE_MODEL.sql` — the counter table,
+the two parent unique keys, the policy table, the worker-link columns and the
+three foreign keys of §10. The worker snapshot writes `POLICY_ID` /
+`POLICY_WORKER_SEQ`, so run it **before** deploying. The policy write itself is
+guarded by its own `try`/`catch`, so a missing `TB_FWCMS_ONLINE_POLICY` costs
+the linkage but not the premium snapshot.
+
+If either unique key in section 2 of that script fails, the table already holds
+duplicates the code never expected — the script includes the queries that list
+them. Fix the data before continuing; the foreign keys in section 3 depend on
+those keys existing.
+
 ## 8. Reused legacy methods (no SQL duplicated)
 
 | Concern | Reused method |
@@ -334,8 +347,145 @@ class-table insert) throws.
 
 - Transaction ordering matches the legacy save (transaction → CN → master →
   schedule → items).
-- Reference-number and cover-note generation use the existing legacy generators
-  and running-number tables — no parallel numbering scheme.
+- Cover-note generation uses the existing legacy generators and running-number
+  tables — no parallel numbering scheme for anything written to the class
+  tables. The portal's own pre-payment quotation reference (§10) is a separate,
+  portal-only number and never reaches them.
 - The online tables remain the portal's tracking record; the `UUID`→`CNCODE`
   linkage is written back after issuance so both views stay consistent.
-- No legacy business logic was modified; the portal only *calls* it.
+- No legacy business logic was modified; the portal only *calls* it.## 10. The portal data model and its references
+
+### 10.1 Why each table exists
+
+The portal records a journey **before** any policy is issued. The class tables
+cannot hold that — they only ever receive an ISSUED cover note, after payment,
+and most Bestinet entries never reach payment. The `TB_FWCMS_ONLINE_*` family is
+where a journey lives until then, and stays afterwards as the portal's own audit
+trail of what was quoted.
+
+Each table is one **level** of the same journey, and owns exactly the data that
+is unique at its grain:
+
+| Table | Grain | Exists because | Key data |
+| --- | --- | --- | --- |
+| `TB_FWCMS_ONLINE` | one Bestinet submission | the journey spans several pages and a payment-gateway round trip, so it must be resumable and auditable | employer, immigration branch, payment, total, status, Application No. |
+| `TB_FWCMS_ONLINE_DTL` | one product (`I` / `H`) | one submission can buy FWIG **and** FWHS, each with its own enquiry, premium and cover note — none of which fits on the journey row | ITR, premium breakdown, `CNCODE` after payment |
+| `TB_FWCMS_ONLINE_POLICY` | one logical policy | one FWHS product can cover **several** policies (permit expiry + nationality); that split used to be computed while rendering and thrown away, so no policy could be referenced, priced or counted, and no worker could be told which policy it belonged to | `POLICY_REF`, grouping key, coverage, per-policy figures |
+| `TB_FWCMS_ONLINE_WORKER` | one insured person | printing and issuance must read workers from the database, not the HTTP session | name, passport, nationality, amounts, its policy |
+| `TB_FWCMS_ONLINE_RUNNO` | one counter series | **not part of the journey** — see below | last number handed out |
+
+`TB_FWCMS_ONLINE_RUNNO` is deliberately unrelated to the four journey tables. It
+is a counter: one row per `(INSCODE, SERIES)` holding a high-water mark, the way
+this platform has always generated running numbers (`TB_CNSERIES` for FWHS cover
+notes, `TB_FWORKERNO_RUNNO` for FWIG). It cannot be a column on a journey table,
+because the next number has to be reserved under a lock **independent of any one
+journey** — two agents quoting at the same instant must not get the same number.
+A foreign key to it would be meaningless: it has no row per journey.
+
+### 10.2 How they are related
+
+```
+TB_FWCMS_ONLINE                         UUID (unique)
+  └─ TB_FWCMS_ONLINE_DTL                UUID + INSURANCE_TYPE (unique)
+       ├─ TB_FWCMS_ONLINE_POLICY        POLICY_ID
+       │    └─ TB_FWCMS_ONLINE_WORKER   POLICY_ID  (nullable)
+       └─ TB_FWCMS_ONLINE_WORKER        UUID + INSURANCE_TYPE
+```
+
+The relationships are now **declared** rather than implied by convention:
+
+| Constraint | From | To | Rule |
+| --- | --- | --- | --- |
+| `FK_FWCMS_ONL_POL_DTL` | `POLICY (UUID, INSURANCE_TYPE)` | `DTL` | `ON DELETE CASCADE` |
+| `FK_FWCMS_ONL_WRK_DTL` | `WORKER (UUID, INSURANCE_TYPE)` | `DTL` | `ON DELETE CASCADE` |
+| `FK_FWCMS_ONL_WRK_POL` | `WORKER (POLICY_ID)` | `POLICY` | `NO ACTION` |
+
+Three deliberate choices:
+
+- **No foreign key from `POLICY` straight to `TB_FWCMS_ONLINE`.** A policy
+  reaches the journey through its product. Declaring both paths would let a
+  policy name a journey its own product does not belong to.
+- **`WORKER.POLICY_ID` is nullable.** The worker snapshot belongs to the
+  product; a worker written before the policy level existed, or one whose
+  grouping could not be computed, must still be kept.
+- **`WORKER → POLICY` is `NO ACTION`, not cascade.** Deleting a policy that
+  still has workers is a bug and the database should say so. The premium step
+  clears a product's workers *before* reconciling its policies, so a policy that
+  legitimately disappears has none pointing at it.
+
+The migration also adds the two parent unique keys the foreign keys need —
+`TB_FWCMS_ONLINE (UUID)` and `TB_FWCMS_ONLINE_DTL (UUID, INSURANCE_TYPE)` —
+which finally state in the schema an invariant the code has always assumed.
+
+### 10.3 The references
+
+One running-number series (`"Q"` + 5 digits) feeds every portal level. All are
+assigned before any money moves, so a journey that is never purchased still
+keeps its numbers — that is the point of the level.
+
+```
+TB_FWCMS_ONLINE            journey   ePLKS/FWCMS/QBAD1234567   (Bestinet App. No.)
+  TB_FWCMS_ONLINE_DTL      product   Q00001                    (= its first policy)
+    TB_FWCMS_ONLINE_POLICY policy    Q00001, Q00002, Q00003
+      TB_FWCMS_ONLINE_WORKER worker  Q00001-001, Q00001-002
+```
+
+| Column | Carries |
+| --- | --- |
+| `TB_FWCMS_ONLINE.REFNO` | Bestinet Application No. — **unchanged** |
+| `TB_FWCMS_ONLINE_DTL.REFNO` | product master = its first policy's `POLICY_REF` |
+| `TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF` | the Bestinet ITR (`PIG25…`), its only home |
+| `TB_FWCMS_ONLINE_POLICY.POLICY_REF` | **the policy's running number** |
+| `WORKER.POLICY_ID` + `POLICY_WORKER_SEQ` | resolve to the worker's `Q00001-001` |
+
+`DTL.REFNO` previously held a second copy of the ITR — the same value as
+`BTN_TRANS_REF`, identifying nothing of the portal's own record. That is what
+this change replaces.
+
+`CNCODE` is **not** stored on the policy rows: cover notes are still generated
+per product after payment by the legacy `DB_FWIG` / `DB_FWHS` generators (§5).
+
+### 10.4 Where the numbers are assigned
+
+- **Counter** — `FWCMSOnline.getNextQuotationRef()` increments
+  `TB_FWCMS_ONLINE_RUNNO (INSCODE, SERIES='QUO', RUNNO)` under a
+  `FOR UPDATE WITH RS` read, the same locking pattern as `DB_FWHS.getREFNO`, and
+  auto-seeds the row on first use.
+- **Product master** — `insertFWCMSONLINEDTL`, at enquiry time, so even an
+  enquiry that dies before the premium step is traceable.
+- **Policies** — `syncFWCMSONLINEPOLICY`, called from
+  `pop_fwcms_capturePremium.jsp`, which holds the enquiry vectors the grouping is
+  computed from. The product's first policy adopts the master (so a
+  single-policy product reads the same at both levels and no number is wasted);
+  further policies draw their own.
+- **Workers** — stamped in the same snapshot pass with `POLICY_ID` and
+  `POLICY_WORKER_SEQ`, composed for display by `FWCMSOnline.buildWorkerRef`.
+
+### 10.5 Re-run behaviour
+
+The premium step re-runs on every retry, so the order is: **clear the product's
+workers → reconcile its policies → re-insert the workers**. Clearing first is
+what lets a policy that no longer exists be deleted at all, given the foreign
+key.
+
+`syncFWCMSONLINEPOLICY` reconciles rather than rewrites: a group that still
+exists **keeps its `POLICY_REF`** and only has its figures and ordinal
+refreshed, a group that disappeared is deleted, and only a genuinely new group
+draws a number. `DTL.REFNO` is re-pointed at the first policy so master and
+policy never drift. `updateFWCMSONLINEDTLRequest` (re-enquiry) leaves `REFNO`
+alone entirely, and `ensureQuotationRef` backfills any DTL row whose `REFNO` is
+not a `Q` number.
+
+### 10.6 Consumers
+
+Everything needing Bestinet's ITR — `issueFWIG` / `issueFWHS`
+(`TB_FWIGSCH` / `TB_FWHSSCH`.`FWCMSREFNO`), `getFWIGGLPrintDataOnline`,
+`pop_fwcms_issue_quotation.jsp` — reads `BTN_TRANS_REF` only; the old `REFNO`
+fallbacks were removed, since that column no longer holds an ITR.
+
+The worker-detail page's Policy Details table shows each policy's stored
+`POLICY_REF` as its "Policy Ref." (matched on the grouping key, then on the
+ordinal), replacing the old `ITR-01` / `ITR-02` label derived at render time.
+Its policy View modal leads with a **Ref.** column showing each worker's
+`Q00001-001`. Opened outside a tracked journey, or if the read fails, it falls
+back to the previous ITR-based label rather than showing nothing.

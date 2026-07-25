@@ -52,6 +52,7 @@
     ════════════════════════════════════════════════════════════════════
 --%>
 <jsp:useBean id="common" scope="page" class="com.rexit.easc.common" />
+<jsp:useBean id="FWCMSOnline" scope="page" class="com.rexit.easc.FWCMSOnline" />
 <%!
     /* ── Policy grouping ──────────────────────────────────────────────────
        Bestinet's ITR (transactionReferenceNumber) does NOT uniquely identify
@@ -148,18 +149,35 @@
     /* Render the per-policy breakdown rows for one product. One <tr> per
        group produced by fnBuildPolicies — (expiry, nationality) groups for
        FWHS, the single all-workers policy for FWIG — in first-seen order.
-       Bestinet supplies no policy number at enquiry time, so a stable
-       logical "Policy Ref." is derived from the product ITR plus the group's
-       ordinal (e.g. ITR-01, ITR-02) — a grouping reference, not an issued
-       policy/cover-note number. Returns an empty string when the product has
+       Bestinet supplies no policy number at enquiry time, so each policy
+       carries the portal's own: the running number the premium step assigned
+       and stored on its TB_FWCMS_ONLINE_POLICY row (Q00001, Q00002, Q00003 —
+       one per group, not one per product). policyRefs is that GROUP_KEY ->
+       POLICY_REF map; rows are matched on the key, then on the ordinal.
+       The label used to be derived from the Bestinet ITR (ITR-01, ITR-02),
+       which identified nothing of the portal's own record and read like a
+       Bestinet number. Still a quotation reference, not an issued
+       policy/cover-note number — the CNCODE is generated per product after
+       payment. When no policy row is available (page opened outside a tracked
+       journey, or a database hiccup) it falls back to quoRef — the product
+       master, itself falling back to the ITR — plus the ordinal, so the
+       breakdown always renders. Returns an empty string when the product has
        no workers so the caller can skip the sub-table entirely. */
     private String fnRenderPolicyRows(java.util.LinkedHashMap groups, String product,
-            String itr, com.rexit.easc.common common) {
+            String quoRef, java.util.LinkedHashMap policyRefs, com.rexit.easc.common common) {
         StringBuilder sb = new StringBuilder();
         int idx = 0;
-        java.util.Iterator it = groups.values().iterator();
+        /* stored references in POLICY_SEQ order — the ordinal fallback when a
+           group key has drifted (a re-enquiry that changed the worker mix) */
+        java.util.Vector vStored = new java.util.Vector();
+        if (policyRefs != null) {
+            java.util.Iterator itRef = policyRefs.values().iterator();
+            while (itRef.hasNext()) vStored.addElement(itRef.next());
+        }
+        java.util.Iterator it = groups.keySet().iterator();
         while (it.hasNext()) {
-            java.util.Vector g = (java.util.Vector) it.next();
+            String key = (String) it.next();
+            java.util.Vector g = (java.util.Vector) groups.get(key);
             idx++;
             String nat  = (String) g.elementAt(0);
             String from = (String) g.elementAt(1);
@@ -168,8 +186,17 @@
             java.util.Vector nos = (java.util.Vector) g.elementAt(6);
             double sumIns = (g.size() > 7) ? ((Double) g.elementAt(7)).doubleValue() : 0;
 
-            String polRef = (itr.equals("") ? product : itr)
-                          + "-" + (idx < 10 ? "0" : "") + idx;
+            /* This policy's own running number, as stored by the premium step:
+               matched on the grouping key, then on the ordinal, and only if
+               neither is available synthesised from the product master. */
+            String polRef = (policyRefs == null) ? "" : common.setNullToString((String) policyRefs.get(key));
+            if (polRef.equals("") && idx <= vStored.size()) {
+                polRef = common.setNullToString((String) vStored.elementAt(idx - 1));
+            }
+            if (polRef.equals("")) {
+                polRef = (quoRef.equals("") ? product : quoRef)
+                       + "-" + (idx < 10 ? "0" : "") + idx;
+            }
 
             StringBuilder arr = new StringBuilder("[");
             for (int k = 0; k < nos.size(); k++) {
@@ -215,13 +242,49 @@
                 sb.append("<td>").append(to.equals("") ? "-" : to).append("</td>");
             }
             sb.append("<td><span class=\"lb-worker-badge\"><i class=\"bi bi-people\"></i>").append(count).append("</span></td>");
+            /* polRef is passed to the modal so each worker row can show its own
+               reference — the policy number plus the worker's position in this
+               policy (Q00001-001), the same value stamped on the worker row. */
             sb.append("<td><button type=\"button\" class=\"btn-lb-view\" onclick=\"openPolicyGroupModal('")
               .append(product).append("','").append(natJs).append("','").append(fromJs).append("','")
-              .append(toJs).append("',").append(arr.toString()).append(")\">")
+              .append(toJs).append("',").append(arr.toString()).append(",'")
+              .append(common.searchReplace(common.searchReplace(polRef, "'", ""), "\"", "")).append("')\">")
               .append("<i class=\"bi bi-eye me-1\"></i>View</button></td>");
             sb.append("</tr>");
         }
         return sb.toString();
+    }
+
+    /* The persisted policy references for this journey — GROUP_KEY ->
+       POLICY_REF per product (TB_FWCMS_ONLINE_POLICY, written by the premium
+       step), plus each product's DTL master reference as the fallback stem.
+       Loaded on ONE connection since the page needs all of it at the same
+       point, and returned as { fwigMaster, fwhsMaster } with the two maps
+       filled in place. Read-only and non-blocking: a page opened outside a
+       tracked journey — or a database that is momentarily unavailable — falls
+       back to the ITR-based label and still renders its breakdown, like every
+       other TB_FWCMS_ONLINE read. */
+    private String[] fnLoadPolicyRefs(com.rexit.easc.FWCMSOnline dao, String uuid,
+            String fwigItr, String fwhsItr,
+            java.util.LinkedHashMap fwigRefs, java.util.LinkedHashMap fwhsRefs) {
+        String[] masters = { fwigItr, fwhsItr };
+        if (uuid.equals("")) return masters;
+        try {
+            dao.makeConnection();
+            /* A DTL row written before this scheme still carries the old ITR
+               copy in REFNO — only a Q-number is the portal reference. */
+            String fwigMaster = dao.getQuotationRef(uuid, "I");
+            String fwhsMaster = dao.getQuotationRef(uuid, "H");
+            if (fwigMaster.startsWith("Q")) masters[0] = fwigMaster;
+            if (fwhsMaster.startsWith("Q")) masters[1] = fwhsMaster;
+            fwigRefs.putAll(dao.getFWCMSONLINEPOLICYRefs(uuid, "I"));
+            fwhsRefs.putAll(dao.getFWCMSONLINEPOLICYRefs(uuid, "H"));
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            dao.takeDown();
+        }
+        return masters;
     }
 
     /* Escape a value for inclusion inside a double-quoted JS string literal
@@ -363,6 +426,10 @@
        These two also decide which product fragment(s) render below. */
     String fwigItr = common.setNullToString(request.getParameter("ITR_I"));
     String fwhsItr = common.setNullToString(request.getParameter("ITR_H"));
+    /* Journey handle (TB_FWCMS_ONLINE.UUID) put in session by
+       pop_fwcms_getData.jsp — the key the per-product quotation references
+       are read back on. */
+    String onlineUuid = common.setNullToString((String) session.getAttribute("SES_FWCMS_ONLINE_UUID"));
     if (fwigItr.equals("") && fwhsItr.equals("")) {
         fwigItr = common.setNullToString((String) session.getAttribute("SES_FWCMSREF"));
     }
@@ -481,10 +548,21 @@
     request.setAttribute("wd_immiCode",   immiCode);
     request.setAttribute("wd_immiDesc",   immiDesc);
     request.setAttribute("wd_immiList",   immiList);
+    /* Policy references — each logical policy carries its own running number
+       (Q00001, Q00002 …), assigned and stored by the premium step, so the
+       rows below show what is actually in TB_FWCMS_ONLINE_POLICY rather than
+       a label invented at render time. The masters are the per-product
+       fallback stem for a journey that has no policy rows yet. */
+    java.util.LinkedHashMap fwigPolicyRefs = new java.util.LinkedHashMap();
+    java.util.LinkedHashMap fwhsPolicyRefs = new java.util.LinkedHashMap();
+    String[] quoRefs  = fnLoadPolicyRefs(FWCMSOnline, onlineUuid, fwigItr, fwhsItr,
+                                         fwigPolicyRefs, fwhsPolicyRefs);
+    String fwigQuoRef = quoRefs[0];
+    String fwhsQuoRef = quoRefs[1];
     request.setAttribute("wd_fwigPolicyRows",
-            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWIG", effDate, fwigCoverageTo, common), "FWIG", fwigItr, common));
+            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWIG", effDate, fwigCoverageTo, common), "FWIG", fwigQuoRef, fwigPolicyRefs, common));
     request.setAttribute("wd_fwhsPolicyRows",
-            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWHS", "", "", common), "FWHS", fwhsItr, common));
+            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWHS", "", "", common), "FWHS", fwhsQuoRef, fwhsPolicyRefs, common));
     request.setAttribute("wd_calcNote", fnRenderCalcNote());
 %>
 <!DOCTYPE html>
@@ -944,12 +1022,32 @@ function openWorkerModal(workerNo) {
    covering every FWIG worker under the ITR. nos is the list of worker row
    numbers belonging to this policy, emitted server-side by
    fnRenderPolicyRows. */
-function openPolicyGroupModal(product, nat, from, to, nos) {
+function openPolicyGroupModal(product, nat, from, to, nos, polRef) {
     var set = {};
     for (var i = 0; i < nos.length; i++) { set[nos[i]] = true; }
-    var members = WORKERS.filter(function (w) { return set[w.no]; });
+    /* Order by the policy's own worker list, not by the merged table, so the
+       row position matches the POLICY_WORKER_SEQ stamped on the worker record
+       — that is what makes the Ref. column below (Q00001-001) the reference
+       actually stored against that worker. */
+    var members = [];
+    for (var k = 0; k < nos.length; k++) {
+        for (var m = 0; m < WORKERS.length; m++) {
+            if (WORKERS[m].no === nos[k]) { members.push(WORKERS[m]); break; }
+        }
+    }
     var period = from ? (to ? (from + ' – ' + to) : from) : (to || '-');
-    buildWorkerModal(members, product + ' – Policy', 'Coverage Period', period, product);
+    buildWorkerModal(members, product + ' – Policy' + (polRef ? ' ' + polRef : ''),
+                     'Coverage Period', period, product, polRef);
+}
+
+/* Q00001 + the worker's 1-based position in its policy -> Q00001-001.
+   Mirrors FWCMSOnline.buildWorkerRef, which stamps the same value onto
+   TB_FWCMS_ONLINE_WORKER. */
+function workerRef(polRef, seq) {
+    if (!polRef) return '-';
+    var s = String(seq);
+    while (s.length < 3) { s = '0' + s; }
+    return polRef + '-' + s;
 }
 
 /* ── Merged column model ─────────────────────────────────────────────
@@ -996,20 +1094,27 @@ function renderSector(sector) {
          + (desc === '' ? '' : ' ' + desc);
 }
 
-function buildWorkerModal(workers, title, periodLabel, periodRange, product) {
+function buildWorkerModal(workers, title, periodLabel, periodRange, product, polRef) {
     document.getElementById('workerModalTitle').innerHTML =
         '<i class="bi bi-person-badge me-2"></i>' + title;
     document.getElementById('workerModalPeriodLabel').textContent = periodLabel;
     document.getElementById('workerModalPeriod').textContent = periodRange;
 
     var cols = mergedColumns(product);
+    /* Policy-group view only: lead with each worker's own reference. The
+       single-worker popup has no policy context and stays as it was. */
+    if (polRef) {
+        cols = [{ th:'Ref.', show:true, nw:true,
+                  td:function(w, i){ return '<strong>' + workerRef(polRef, i + 1) + '</strong>'; } }]
+               .concat(cols);
+    }
     var head = cols.map(function(c) {
         return '<th' + (c.end ? ' class="text-end"' : '') + '>' + c.th + '</th>';
     }).join('');
 
-    const rows = workers.map(function(w) {
+    const rows = workers.map(function(w, i) {
         return '<tr>' + cols.map(function(c) {
-            return '<td' + (c.end ? ' class="text-end"' : (c.nw ? ' class="text-nowrap"' : '')) + '>' + c.td(w) + '</td>';
+            return '<td' + (c.end ? ' class="text-end"' : (c.nw ? ' class="text-nowrap"' : '')) + '>' + c.td(w, i) + '</td>';
         }).join('') + '</tr>';
     }).join('') ||
         '<tr><td colspan="' + cols.length + '" class="text-center text-muted py-3">No worker records found.</td></tr>';
