@@ -334,8 +334,59 @@ class-table insert) throws.
 
 - Transaction ordering matches the legacy save (transaction → CN → master →
   schedule → items).
-- Reference-number and cover-note generation use the existing legacy generators
-  and running-number tables — no parallel numbering scheme.
+- Cover-note generation uses the existing legacy generators and running-number
+  tables — no parallel numbering scheme for anything written to the class
+  tables. The portal's own pre-payment quotation reference (§10) is a separate,
+  portal-only number and never reaches them.
 - The online tables remain the portal's tracking record; the `UUID`→`CNCODE`
   linkage is written back after issuance so both views stay consistent.
 - No legacy business logic was modified; the portal only *calls* it.
+
+## 10. Portal quotation reference (pre-payment) — `TB_FWCMS_ONLINE_DTL.REFNO`
+
+Before payment there is no cover note, so the portal needs a reference of its
+own for each product of a journey. `TB_FWCMS_ONLINE_DTL.REFNO` used to be a
+second copy of the Bestinet ITR — the same value `BTN_TRANS_REF` already
+carried, identifying nothing of the portal's own record. It now holds a
+**running number**:
+
+```
+Q00001, Q00002, Q00003, …          ("Q" + 5-digit counter)
+```
+
+| Column | Carries | Set by |
+| --- | --- | --- |
+| `TB_FWCMS_ONLINE.REFNO` | Bestinet Application No. `ePLKS/FWCMS/…` (front end: "Application No.") — **unchanged** | `updateFWCMSONLINETRANSEnquiry` |
+| `TB_FWCMS_ONLINE_DTL.REFNO` | **portal quotation reference `Q00001`** | `insertFWCMSONLINEDTL` (generated, once) |
+| `TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF` | Bestinet ITR (`PIG25…` / `PHS25…`) | enquiry request + response legs |
+| `TB_FWCMS_ONLINE_DTL.CNCODE` | issued class-table cover note | `updateFWCMSONLINEDTLIssued`, after payment |
+
+So one product row reads end to end as
+`Q00001 → ITR PIG25… → CNCODE 08EGY0013690`.
+
+**Generation.** `FWCMSOnline.getNextQuotationRef()` increments
+`TB_FWCMS_ONLINE_RUNNO (INSCODE, SERIES='QUO', RUNNO)` under a
+`FOR UPDATE WITH RS` read — the same locking pattern as the legacy
+`DB_FWHS.getREFNO` / `TB_CNSERIES` generator — and auto-seeds the row with 1 on
+first use, so no manual seeding is required. DDL:
+`MIGRATE_FWCMS_ONLINE_QUOTATION_REF.sql`.
+
+**Stability.** The number is assigned once, when the DTL row is created, and is
+never rewritten: `updateFWCMSONLINEDTLRequest` (portal retry / re-enquiry)
+refreshes `BTN_TRANS_REF` and leaves `REFNO` alone, so an agent keeps the
+reference already shown. `ensureQuotationRef` backfills rows written before this
+scheme (any `REFNO` that is not a `Q` number) the next time they are re-enquired.
+
+**Consumers.** Everything that needs Bestinet's ITR — `issueFWIG` / `issueFWHS`
+(`TB_FWIGSCH` / `TB_FWHSSCH`.`FWCMSREFNO`), `getFWIGGLPrintDataOnline`,
+`pop_fwcms_issue_quotation.jsp` — reads `BTN_TRANS_REF` only; the previous
+`REFNO` fallbacks were removed, since that column no longer holds an ITR.
+
+**Front end.** The worker-detail page's Policy Details cards derived their
+"Policy Ref." from the ITR plus the group ordinal (`ITR-01`, `ITR-02`). They now
+build it from this quotation reference — `Q00001-01`, `Q00001-02` — where the
+stem is the persisted product record and the suffix is the logical policy group
+(FWHS splits on permit expiry + nationality; FWIG is always one group). It stays
+a grouping reference, not an issued policy number. If the page is opened outside
+a tracked journey (no `SES_FWCMS_ONLINE_UUID`) or the read fails, it falls back
+to the old ITR-based label rather than showing nothing.

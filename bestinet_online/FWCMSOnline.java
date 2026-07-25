@@ -263,28 +263,179 @@ public class FWCMSOnline extends DB_Contact{
 	}
 
 	/* =====================================================================
+	   QUOTATION REFERENCE — TB_FWCMS_ONLINE_DTL.REFNO
+	   TB_FWCMS_ONLINE_DTL.REFNO used to be a second copy of the Bestinet
+	   ITR (transactionReferenceNumber), which BTN_TRANS_REF already holds —
+	   two columns carrying the same value, neither of them identifying the
+	   portal's own record. REFNO is now the portal's OWN pre-payment
+	   reference for that product row: a running number "Q" + 5 digits
+	   (Q00001, Q00002, …) assigned once, at the moment the DTL row is
+	   created, and never rewritten afterwards — so a journey stays
+	   traceable by it from enquiry through payment to the issued CNCODE.
+	   The Bestinet ITR keeps living in BTN_TRANS_REF alone (it is what
+	   TB_FWIGSCH / TB_FWHSSCH.FWCMSREFNO must carry, see issueFWIG /
+	   issueFWHS), and the journey-level TB_FWCMS_ONLINE.REFNO is unchanged:
+	   that one is Bestinet's Application No. ("ePLKS/FWCMS/…").
+
+	   The counter lives in TB_FWCMS_ONLINE_RUNNO (INSCODE, SERIES, RUNNO) —
+	   same shape as the legacy TB_CNSERIES generator, auto-seeded on first
+	   use, so no manual seeding is needed. DDL:
+	   MIGRATE_FWCMS_ONLINE_QUOTATION_REF.sql.
+	   ===================================================================== */
+
+	private static final String QUOREF_SERIES	= "QUO";
+	private static final String QUOREF_PREFIX	= "Q";
+	/* 5 digits (Q00001); a counter past 99999 simply grows wider. */
+	private DecimalFormat quoRefFormat = new DecimalFormat("00000");
+
+	/* Next portal quotation reference. Reads the counter FOR UPDATE (the
+	   legacy DB_FWHS.getREFNO locking pattern) so two concurrent journeys
+	   cannot take the same number, and INSERTs the counter row with 1 when
+	   this is the first quotation ever issued for the principal. */
+	public String getNextQuotationRef() throws Exception{
+
+		long lRunNo = 0;
+		boolean bSeeded = false;
+
+		String myQuery = "SELECT RUNNO FROM TB_FWCMS_ONLINE_RUNNO WHERE INSCODE=? AND SERIES=? "+
+						 "FOR UPDATE WITH RS";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, GL_PRINCIPLE_CODE);
+		pstmt.setString(2, QUOREF_SERIES);
+		ResultSet rs = pstmt.executeQuery();
+		if (rs.next()){
+			bSeeded = true;
+			lRunNo  = rs.getLong("RUNNO") + 1;
+		}
+		rs.close();
+		pstmt.close();
+
+		if (bSeeded){
+			myQuery = "UPDATE TB_FWCMS_ONLINE_RUNNO SET RUNNO=? WHERE INSCODE=? AND SERIES=?";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setLong(1, lRunNo);
+			pstmt.setString(2, GL_PRINCIPLE_CODE);
+			pstmt.setString(3, QUOREF_SERIES);
+			RowsAffected = pstmt.executeUpdate();
+			pstmt.close();
+
+			if (RowsAffected > 0){
+				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+				pstmt2.setLong(1, lRunNo);
+				pstmt2.setString(2, GL_PRINCIPLE_CODE);
+				pstmt2.setString(3, QUOREF_SERIES);
+				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+			}
+		}else{
+			lRunNo = 1;
+
+			myQuery = "INSERT INTO TB_FWCMS_ONLINE_RUNNO (INSCODE,SERIES,RUNNO) VALUES (?,?,?)";
+			pstmt = myConn.prepareStatement(myQuery);
+			pstmt.setString(1, GL_PRINCIPLE_CODE);
+			pstmt.setString(2, QUOREF_SERIES);
+			pstmt.setLong(3, lRunNo);
+			RowsAffected = pstmt.executeUpdate();
+			pstmt.close();
+
+			if (RowsAffected > 0){
+				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+				pstmt2.setString(1, GL_PRINCIPLE_CODE);
+				pstmt2.setString(2, QUOREF_SERIES);
+				pstmt2.setLong(3, lRunNo);
+				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+			}
+		}
+
+		return QUOREF_PREFIX + quoRefFormat.format(lRunNo);
+	}
+
+	/* The quotation reference already assigned to one product row, or ""
+	   when the row does not exist / predates this scheme. Read-only — the
+	   worker-detail page shows it as the policy reference. */
+	public String getQuotationRef(String UUID,String INSTYPE) throws Exception{
+
+		String REFNO = "";
+		String myQuery = "SELECT REFNO FROM TB_FWCMS_ONLINE_DTL WHERE UUID=? AND INSURANCE_TYPE=? WITH UR";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1, UUID);
+		pstmt.setString(2, INSTYPE);
+		ResultSet rs = pstmt.executeQuery();
+		if (rs.next()){
+			REFNO = nz(rs.getString("REFNO")).trim();
+		}
+		rs.close();
+		pstmt.close();
+
+		return REFNO;
+	}
+
+	/* Backfill for a DTL row that carries no quotation reference — rows
+	   written before this scheme, and rows whose REFNO still holds the old
+	   ITR copy (any value that is not a Q-number). Assigns the next running
+	   number and returns it; returns the existing one untouched otherwise,
+	   so a re-enquiry never re-numbers a product. */
+	public String ensureQuotationRef(String UUID,String INSTYPE,String UPDATEDBY) throws Exception{
+
+		String REFNO = getQuotationRef(UUID, INSTYPE);
+		if (REFNO.startsWith(QUOREF_PREFIX)) return REFNO;
+
+		REFNO = getNextQuotationRef();
+
+		String NOW = now();
+		String myQuery = "UPDATE TB_FWCMS_ONLINE_DTL SET REFNO=?,UPDATED_BY=?,UPDATED_DATE=? "+
+						 "WHERE UUID=? AND INSURANCE_TYPE=?";
+		pstmt = myConn.prepareStatement(myQuery);
+		pstmt.setString(1,REFNO);
+		pstmt.setString(2,UPDATEDBY);
+		pstmt.setString(3,NOW);
+		pstmt.setString(4,UUID);
+		pstmt.setString(5,INSTYPE);
+		RowsAffected = pstmt.executeUpdate();
+		pstmt.close();
+
+		if (RowsAffected > 0){
+			pstmt2 = new PreparedStatementLogable(myConn,myQuery);
+			pstmt2.setString(1,REFNO);
+			pstmt2.setString(2,UPDATEDBY);
+			pstmt2.setString(3,NOW);
+			pstmt2.setString(4,UUID);
+			pstmt2.setString(5,INSTYPE);
+			insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+		}
+
+		return REFNO;
+	}
+
+	/* =====================================================================
 	   Child — TB_FWCMS_ONLINE_DTL: one row per insurance product inside a
 	   journey, keyed by UUID + INSURANCE_TYPE (update-first idempotency:
 	   a retried enquiry UPDATEs its row, never inserts a second one).
 	   ===================================================================== */
 
-	public int insertFWCMSONLINEDTL(String UUID,String INSTYPE,String REFNO,
+	/* BTNTRANSREF is the Bestinet ITR the enquiry was submitted with; it is
+	   written to BTN_TRANS_REF right away (the enquiry response later
+	   confirms it through updateFWCMSONLINEDTLEnquiry). REFNO is NOT taken
+	   from the caller — the portal's own quotation running number is
+	   generated here, once per product row. */
+	public int insertFWCMSONLINEDTL(String UUID,String INSTYPE,String BTNTRANSREF,
 								 String REQTIMESTAMP,String INSSTATUS,String CREATEDBY)
 								 throws Exception{
 
-		String NOW = now();
-		String myQuery = "INSERT INTO TB_FWCMS_ONLINE_DTL (UUID,INSURANCE_TYPE,REFNO,"+
+		String NOW   = now();
+		String REFNO = getNextQuotationRef();
+		String myQuery = "INSERT INTO TB_FWCMS_ONLINE_DTL (UUID,INSURANCE_TYPE,REFNO,BTN_TRANS_REF,"+
 		                 "REQ_TIMESTAMP,INS_STATUS,CREATED_BY,CREATED_DATE)"+
-		                 "VALUES(?,?,?,?,?,?,?)";
+		                 "VALUES(?,?,?,?,?,?,?,?)";
 
         pstmt = myConn.prepareStatement(myQuery);
         pstmt.setString(1, UUID);
 	    pstmt.setString(2, INSTYPE);
 	    pstmt.setString(3, REFNO);
-		pstmt.setString(4, REQTIMESTAMP);
-		pstmt.setString(5, INSSTATUS);
-		pstmt.setString(6, CREATEDBY);
-		pstmt.setString(7, NOW);
+	    pstmt.setString(4, BTNTRANSREF);
+		pstmt.setString(5, REQTIMESTAMP);
+		pstmt.setString(6, INSSTATUS);
+		pstmt.setString(7, CREATEDBY);
+		pstmt.setString(8, NOW);
 
 
 		RowsAffected = pstmt.executeUpdate();
@@ -295,10 +446,11 @@ public class FWCMSOnline extends DB_Contact{
 			pstmt2.setString(1, UUID);
 			pstmt2.setString(2, INSTYPE);
 			pstmt2.setString(3, REFNO);
-			pstmt2.setString(4, REQTIMESTAMP);
-			pstmt2.setString(5, INSSTATUS);
-			pstmt2.setString(6, CREATEDBY);
-			pstmt2.setString(7, NOW);
+			pstmt2.setString(4, BTNTRANSREF);
+			pstmt2.setString(5, REQTIMESTAMP);
+			pstmt2.setString(6, INSSTATUS);
+			pstmt2.setString(7, CREATEDBY);
+			pstmt2.setString(8, NOW);
 
 			insertSQLLog2("SQL",pstmt2.toString(),"","","","");
 		}
@@ -308,17 +460,21 @@ public class FWCMSOnline extends DB_Contact{
 
 	/* Re-enquiry of an attempt already recorded under the same UUID +
 	   INSURANCE_TYPE (e.g. portal retry): reset the request leg instead of
-	   inserting a second row, so one attempt stays one row. */
-	public int updateFWCMSONLINEDTLRequest(String REFNO,String REQTIMESTAMP,String INSSTATUS,
+	   inserting a second row, so one attempt stays one row. REFNO (the
+	   quotation running number) is deliberately NOT touched — a retry must
+	   keep the reference the agent has already been shown; only the ITR the
+	   retry was submitted with is refreshed. ensureQuotationRef backfills
+	   rows created before this scheme. */
+	public int updateFWCMSONLINEDTLRequest(String BTNTRANSREF,String REQTIMESTAMP,String INSSTATUS,
 								String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
 
 			String NOW = now();
-			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET REFNO=?,REQ_TIMESTAMP=?,INS_STATUS=?,"+
+			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET BTN_TRANS_REF=?,REQ_TIMESTAMP=?,INS_STATUS=?,"+
 							  "ERROR_CODE=NULL,ERROR_MSG=NULL,UPDATED_BY=?,UPDATED_DATE=? "+
 							  "WHERE UUID=? AND INSURANCE_TYPE=?";
 			pstmt = myConn.prepareStatement(myQuery);
-			pstmt.setString(1,REFNO);
+			pstmt.setString(1,BTNTRANSREF);
 			pstmt.setString(2,REQTIMESTAMP);
 			pstmt.setString(3,INSSTATUS);
 			pstmt.setString(4,UPDATEDBY);
@@ -330,7 +486,7 @@ public class FWCMSOnline extends DB_Contact{
 
 			if (RowsAffected > 0){
 				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-				pstmt2.setString(1,REFNO);
+				pstmt2.setString(1,BTNTRANSREF);
 				pstmt2.setString(2,REQTIMESTAMP);
 				pstmt2.setString(3,INSSTATUS);
 				pstmt2.setString(4,UPDATEDBY);
@@ -338,6 +494,8 @@ public class FWCMSOnline extends DB_Contact{
 				pstmt2.setString(6,UUID);
 				pstmt2.setString(7,INSTYPE);
 				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
+
+				ensureQuotationRef(UUID, INSTYPE, UPDATEDBY);
 			}
 
 			return RowsAffected;
@@ -1251,8 +1409,10 @@ public class FWCMSOnline extends DB_Contact{
 		double dNETPREM   = toDouble((String)htDTL.get("NET_PREMIUM"));
 		double dSTAXPCT   = backOutPct(dSTAX, dGPREM - dREBATE);
 
+		/* FWCMSREFNO on the class tables is Bestinet's ITR — BTN_TRANS_REF
+		   is the only column that carries it (REFNO is the portal's own
+		   quotation running number). */
 		String FWCMSREF = (String)htDTL.get("BTN_TRANS_REF");
-		if (FWCMSREF.equals("")) FWCMSREF = (String)htDTL.get("REFNO");
 
 		/* client (TB_CONTACT.AUTONUM) for TB_TRANSACTION.CLIENTID —
 		   resolved before the class-table transaction opens, on this
@@ -1398,8 +1558,10 @@ public class FWCMSOnline extends DB_Contact{
 		double dNETPREM = toDouble((String)htDTL.get("NET_PREMIUM"));
 		double dSTAXPCT = backOutPct(dSTAX, dGPREM - dREBATE);
 
+		/* FWCMSREFNO on the class tables is Bestinet's ITR — BTN_TRANS_REF
+		   is the only column that carries it (REFNO is the portal's own
+		   quotation running number). */
 		String FWCMSREF = (String)htDTL.get("BTN_TRANS_REF");
-		if (FWCMSREF.equals("")) FWCMSREF = (String)htDTL.get("REFNO");
 
 		/* cross-link to the journey's issued FWIG cover note (IG_NO) when
 		   that product exists and carries a real class-table key */
@@ -1563,10 +1725,9 @@ public class FWCMSOnline extends DB_Contact{
 		htGL.put("POSTCODE",	(String)htTXN.get("EMPLOYER_POSTCODE"));
 		htGL.put("STATE",		(String)htTXN.get("EMPLOYER_STATE"));
 
-		/* Bestinet reference: the gateway's own transaction reference,
-		   falling back to the per-type ITR the journey started with */
+		/* Bestinet reference: the per-type ITR the journey was enquired
+		   with (BTN_TRANS_REF — REFNO is the portal quotation number) */
 		String FWCMSREFNO = (String)htDTL.get("BTN_TRANS_REF");
-		if (FWCMSREFNO.equals("")) FWCMSREFNO = (String)htDTL.get("REFNO");
 		htGL.put("FWCMSREFNO", FWCMSREFNO);
 
 		/* immigration addressee — G7 column carries the full mailing block

@@ -52,6 +52,7 @@
     ════════════════════════════════════════════════════════════════════
 --%>
 <jsp:useBean id="common" scope="page" class="com.rexit.easc.common" />
+<jsp:useBean id="FWCMSOnline" scope="page" class="com.rexit.easc.FWCMSOnline" />
 <%!
     /* ── Policy grouping ──────────────────────────────────────────────────
        Bestinet's ITR (transactionReferenceNumber) does NOT uniquely identify
@@ -148,13 +149,21 @@
     /* Render the per-policy breakdown rows for one product. One <tr> per
        group produced by fnBuildPolicies — (expiry, nationality) groups for
        FWHS, the single all-workers policy for FWIG — in first-seen order.
-       Bestinet supplies no policy number at enquiry time, so a stable
-       logical "Policy Ref." is derived from the product ITR plus the group's
-       ordinal (e.g. ITR-01, ITR-02) — a grouping reference, not an issued
-       policy/cover-note number. Returns an empty string when the product has
+       Bestinet supplies no policy number at enquiry time, so the logical
+       "Policy Ref." is built from the portal's OWN pre-payment reference for
+       this product — the quotation running number stored in
+       TB_FWCMS_ONLINE_DTL.REFNO (Q00001…) — plus the group's ordinal:
+       Q00001-01, Q00001-02. It used to be derived from the Bestinet ITR
+       (ITR-01, ITR-02), which identified nothing of the portal's own record
+       and read like a Bestinet number; quoRef makes every row traceable back
+       to one persisted journey/product row. Still a grouping reference, not
+       an issued policy/cover-note number. quoRef falls back to the ITR (then
+       to the product name) when the journey row is unavailable — e.g. the
+       page opened outside a tracked journey, or a database hiccup — so the
+       breakdown always renders. Returns an empty string when the product has
        no workers so the caller can skip the sub-table entirely. */
     private String fnRenderPolicyRows(java.util.LinkedHashMap groups, String product,
-            String itr, com.rexit.easc.common common) {
+            String quoRef, com.rexit.easc.common common) {
         StringBuilder sb = new StringBuilder();
         int idx = 0;
         java.util.Iterator it = groups.values().iterator();
@@ -168,7 +177,7 @@
             java.util.Vector nos = (java.util.Vector) g.elementAt(6);
             double sumIns = (g.size() > 7) ? ((Double) g.elementAt(7)).doubleValue() : 0;
 
-            String polRef = (itr.equals("") ? product : itr)
+            String polRef = (quoRef.equals("") ? product : quoRef)
                           + "-" + (idx < 10 ? "0" : "") + idx;
 
             StringBuilder arr = new StringBuilder("[");
@@ -222,6 +231,34 @@
             sb.append("</tr>");
         }
         return sb.toString();
+    }
+
+    /* The portal quotation references (TB_FWCMS_ONLINE_DTL.REFNO, "Q00001")
+       assigned to this journey's products when their DTL rows were created —
+       returned as { FWIG, FWHS } on one connection, since the page needs both
+       at the same point. Read-only lookup on the journey UUID the enquiry put
+       in session; each product's ITR is its fallback, so a page opened outside
+       a tracked journey — or a database that is momentarily unavailable —
+       still renders its policy breakdown instead of failing. Never blocks the
+       page, like every other TB_FWCMS_ONLINE read. */
+    private String[] fnQuotationRefs(com.rexit.easc.FWCMSOnline dao, String uuid,
+            String fwigItr, String fwhsItr) {
+        String[] refs = { fwigItr, fwhsItr };
+        if (uuid.equals("")) return refs;
+        try {
+            dao.makeConnection();
+            /* A row written before this scheme still carries the old ITR copy
+               in REFNO — only a Q-number is the portal reference. */
+            String fwigRef = dao.getQuotationRef(uuid, "I");
+            String fwhsRef = dao.getQuotationRef(uuid, "H");
+            if (fwigRef.startsWith("Q")) refs[0] = fwigRef;
+            if (fwhsRef.startsWith("Q")) refs[1] = fwhsRef;
+        } catch (Exception e) {
+            e.printStackTrace();
+        } finally {
+            dao.takeDown();
+        }
+        return refs;
     }
 
     /* Escape a value for inclusion inside a double-quoted JS string literal
@@ -363,6 +400,10 @@
        These two also decide which product fragment(s) render below. */
     String fwigItr = common.setNullToString(request.getParameter("ITR_I"));
     String fwhsItr = common.setNullToString(request.getParameter("ITR_H"));
+    /* Journey handle (TB_FWCMS_ONLINE.UUID) put in session by
+       pop_fwcms_getData.jsp — the key the per-product quotation references
+       are read back on. */
+    String onlineUuid = common.setNullToString((String) session.getAttribute("SES_FWCMS_ONLINE_UUID"));
     if (fwigItr.equals("") && fwhsItr.equals("")) {
         fwigItr = common.setNullToString((String) session.getAttribute("SES_FWCMSREF"));
     }
@@ -481,10 +522,17 @@
     request.setAttribute("wd_immiCode",   immiCode);
     request.setAttribute("wd_immiDesc",   immiDesc);
     request.setAttribute("wd_immiList",   immiList);
+    /* Policy Ref. stem — the portal's own pre-payment reference for each
+       product (TB_FWCMS_ONLINE_DTL.REFNO, e.g. Q00001), read from the
+       journey the enquiry recorded. The breakdown rows below suffix the
+       group ordinal onto it (Q00001-01, Q00001-02). */
+    String[] quoRefs  = fnQuotationRefs(FWCMSOnline, onlineUuid, fwigItr, fwhsItr);
+    String fwigQuoRef = quoRefs[0];
+    String fwhsQuoRef = quoRefs[1];
     request.setAttribute("wd_fwigPolicyRows",
-            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWIG", effDate, fwigCoverageTo, common), "FWIG", fwigItr, common));
+            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWIG", effDate, fwigCoverageTo, common), "FWIG", fwigQuoRef, common));
     request.setAttribute("wd_fwhsPolicyRows",
-            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWHS", "", "", common), "FWHS", fwhsItr, common));
+            fnRenderPolicyRows(fnBuildPolicies(vAllWorkers, "FWHS", "", "", common), "FWHS", fwhsQuoRef, common));
     request.setAttribute("wd_calcNote", fnRenderCalcNote());
 %>
 <!DOCTYPE html>
