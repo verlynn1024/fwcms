@@ -208,8 +208,20 @@ CREATE INDEX IX_FWCMS_ONL_WRK_POL ON TB_FWCMS_ONLINE_WORKER (POLICY_ID);
 --     the column now says so. Catalog-only change — the data is untouched and
 --     no REORG is needed — but every static package and view over the table
 --     must be revalidated, and the rename must run BEFORE 5b below.
+--
+--     XI_FWCMSOL_DTL_BTN — an index on BTN_TRANS_REF that predates this
+--     script (not created by anything here) — blocks the RENAME with
+--     SQL0478N until it is dropped. Recreated below under a name that
+--     matches the column it now indexes; adjust if your instance's index
+--     was UNIQUE or covered more columns; check on it first:
+--       SELECT INDNAME, UNIQUERULE, COLNAMES FROM SYSCAT.INDEXES
+--        WHERE TABNAME = 'TB_FWCMS_ONLINE_DTL' AND INDNAME = 'XI_FWCMSOL_DTL_BTN';
+DROP INDEX XI_FWCMSOL_DTL_BTN;
+
 ALTER TABLE TB_FWCMS_ONLINE_DTL
     RENAME COLUMN BTN_TRANS_REF TO ITR_NO;
+
+CREATE INDEX XI_FWCMSOL_DTL_ITR ON TB_FWCMS_ONLINE_DTL (ITR_NO);
 
 -- 5b. Rows written before this change carry the ITR in REFNO and, for enquiry
 --     legs that never got a response, nothing in ITR_NO. Copy it across so
