@@ -281,9 +281,7 @@
             fwhsRefs.putAll(dao.getFWCMSONLINEPOLICYRefs(uuid, "H"));
         } catch (Exception e) {
             e.printStackTrace();
-        } finally {
-            dao.takeDown();
-        }
+        } 
         return masters;
     }
 
@@ -810,23 +808,21 @@
                  answer is on record. Yes/No is mandatory (no default) and is
                  POSTed to pop_fwcms_worker_detail_rep.jsp as "cfmkt_ind" on
                  Make Payment, ahead of the declaration tick below. --%>
-            <div class="lb-consent">
-                <p class="lb-consent-text">
-                    <strong>Personal Data Protection Act 2010</strong> — You consent to us using your
-                    personal data to contact you on Liberty General Insurance Berhad, Formerly known as
-                    AmGeneral Insurance Berhad products and promotions.
-                </p>
-                <div class="lb-consent-options">
-                    <label class="lb-consent-opt">
-                        <input type="radio" name="pdpaConsent" id="rdoConsentYes" value="Y">
-                        <span>Yes</span>
-                    </label>
-                    <label class="lb-consent-opt">
-                        <input type="radio" name="pdpaConsent" id="rdoConsentNo" value="N">
-                        <span>No</span>
-                    </label>
-                </div>
-            </div>
+            <div class="lb-declaration" style="display:block; margin-bottom:16px;">
+			    <p style="margin:0 0 10px;color:#78350F;">
+				    <span style="font-weight:500;">Personal Data Protection Act 2010</span> -
+				    You consent to us using your personal data to contact you on Liberty General Insurance Berhad,
+				    formerly known as AmGeneral Insurance Berhad, products and promotions.
+				</p>
+			
+			    <label style="margin-right:20px;">
+			        <input type="radio" name="pdpaConsent" value="Y"> Yes
+			    </label>
+			
+			    <label>
+			        <input type="radio" name="pdpaConsent" value="N"> No
+			    </label>
+			</div>
 
             <div class="lb-declaration">
                 <input type="checkbox" id="chkDecl">
