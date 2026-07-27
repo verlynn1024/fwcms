@@ -240,8 +240,8 @@ public class FWCMSOnline extends DB_Contact{
 
 	/* ── QUOTATION REFERENCE — the portal's own pre-payment reference for a
 	   product row: "Q" + 5 digits, assigned once and never rewritten. Bestinet's
-	   ITR lives in BTN_TRANS_REF alone. Counter: TB_FWCMS_ONLINE_RUNNO, seeded
-	   on first use (MIGRATE_FWCMS_ONLINE_REFERENCE_MODEL.sql). ── */
+	   ITR lives in ITR_NO alone. Counter: TB_FWCMS_ONLINE_RUNNO, seeded on
+	   first use (MIGRATE_FWCMS_ONLINE_REFERENCE_MODEL.sql). ── */
 
 	private static final String QUOREF_SERIES	= "QUO";
 	private static final String QUOREF_PREFIX	= "Q";
@@ -381,15 +381,15 @@ public class FWCMSOnline extends DB_Contact{
 	   UUID + INSURANCE_TYPE ("I" = FWIG, "H" = FWHS). Update-first: a retried
 	   enquiry UPDATEs its row, never inserts a second one. ── */
 
-	/* BTNTRANSREF is the Bestinet ITR the enquiry was submitted with. REFNO is
+	/* ITRNO is the Bestinet ITR the enquiry was submitted with. REFNO is
 	   not a parameter — the quotation running number is generated here. */
-	public int insertFWCMSONLINEDTL(String UUID,String INSTYPE,String BTNTRANSREF,
+	public int insertFWCMSONLINEDTL(String UUID,String INSTYPE,String ITRNO,
 								 String REQTIMESTAMP,String INSSTATUS,String CREATEDBY)
 								 throws Exception{
 
 		String NOW   = now();
 		String REFNO = getNextQuotationRef();
-		String myQuery = "INSERT INTO TB_FWCMS_ONLINE_DTL (UUID,INSURANCE_TYPE,REFNO,BTN_TRANS_REF,"+
+		String myQuery = "INSERT INTO TB_FWCMS_ONLINE_DTL (UUID,INSURANCE_TYPE,REFNO,ITR_NO,"+
 		                 "REQ_TIMESTAMP,INS_STATUS,CREATED_BY,CREATED_DATE)"+
 		                 "VALUES(?,?,?,?,?,?,?,?)";
 
@@ -397,7 +397,7 @@ public class FWCMSOnline extends DB_Contact{
         pstmt.setString(1, UUID);
 	    pstmt.setString(2, INSTYPE);
 	    pstmt.setString(3, REFNO);
-	    pstmt.setString(4, BTNTRANSREF);
+	    pstmt.setString(4, ITRNO);
 		pstmt.setString(5, REQTIMESTAMP);
 		pstmt.setString(6, INSSTATUS);
 		pstmt.setString(7, CREATEDBY);
@@ -412,7 +412,7 @@ public class FWCMSOnline extends DB_Contact{
 			pstmt2.setString(1, UUID);
 			pstmt2.setString(2, INSTYPE);
 			pstmt2.setString(3, REFNO);
-			pstmt2.setString(4, BTNTRANSREF);
+			pstmt2.setString(4, ITRNO);
 			pstmt2.setString(5, REQTIMESTAMP);
 			pstmt2.setString(6, INSSTATUS);
 			pstmt2.setString(7, CREATEDBY);
@@ -427,16 +427,16 @@ public class FWCMSOnline extends DB_Contact{
 	/* Retry of an attempt already recorded: reset the request leg instead of
 	   inserting a second row. REFNO is deliberately not touched — a retry keeps
 	   the reference the agent has already been shown. */
-	public int updateFWCMSONLINEDTLRequest(String BTNTRANSREF,String REQTIMESTAMP,String INSSTATUS,
+	public int updateFWCMSONLINEDTLRequest(String ITRNO,String REQTIMESTAMP,String INSSTATUS,
 								String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
 
 			String NOW = now();
-			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET BTN_TRANS_REF=?,REQ_TIMESTAMP=?,INS_STATUS=?,"+
+			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET ITR_NO=?,REQ_TIMESTAMP=?,INS_STATUS=?,"+
 							  "ERROR_CODE=NULL,ERROR_MSG=NULL,UPDATED_BY=?,UPDATED_DATE=? "+
 							  "WHERE UUID=? AND INSURANCE_TYPE=?";
 			pstmt = myConn.prepareStatement(myQuery);
-			pstmt.setString(1,BTNTRANSREF);
+			pstmt.setString(1,ITRNO);
 			pstmt.setString(2,REQTIMESTAMP);
 			pstmt.setString(3,INSSTATUS);
 			pstmt.setString(4,UPDATEDBY);
@@ -448,7 +448,7 @@ public class FWCMSOnline extends DB_Contact{
 
 			if (RowsAffected > 0){
 				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-				pstmt2.setString(1,BTNTRANSREF);
+				pstmt2.setString(1,ITRNO);
 				pstmt2.setString(2,REQTIMESTAMP);
 				pstmt2.setString(3,INSSTATUS);
 				pstmt2.setString(4,UPDATEDBY);
@@ -463,17 +463,17 @@ public class FWCMSOnline extends DB_Contact{
 			return RowsAffected;
 	}
 
-	public int updateFWCMSONLINEDTLEnquiry(String BTNTRANSREF,String RESPTIMESTAMP,String NO_OF_WORKER,
+	public int updateFWCMSONLINEDTLEnquiry(String ITRNO,String RESPTIMESTAMP,String NO_OF_WORKER,
 								String UPDATEDBY,String UUID,String INSTYPE)
 								throws Exception{
 
 			//UPDATE FWCMS ONLINE DTL RESPONSE RECORDS (SUCCESSFUL ENQUIRY)
 			String NOW = now();
-			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET BTN_TRANS_REF=?,RESP_TIMESTAMP=?,NO_WORKER=?,"+
+			String myQuery	= "UPDATE TB_FWCMS_ONLINE_DTL SET ITR_NO=?,RESP_TIMESTAMP=?,NO_WORKER=?,"+
 							  "UPDATED_BY=?,UPDATED_DATE=? "+
 							  "WHERE UUID=? AND INSURANCE_TYPE=?";
 			pstmt = myConn.prepareStatement(myQuery);
-			pstmt.setString(1,BTNTRANSREF);
+			pstmt.setString(1,ITRNO);
 			pstmt.setString(2,RESPTIMESTAMP);
 			pstmt.setString(3,NO_OF_WORKER);
 			pstmt.setString(4,UPDATEDBY);
@@ -485,7 +485,7 @@ public class FWCMSOnline extends DB_Contact{
 
 			if (RowsAffected > 0){
 				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-				pstmt2.setString(1,BTNTRANSREF);
+				pstmt2.setString(1,ITRNO);
 				pstmt2.setString(2,RESPTIMESTAMP);
 				pstmt2.setString(3,NO_OF_WORKER);
 				pstmt2.setString(4,UPDATEDBY);
@@ -1214,7 +1214,7 @@ public class FWCMSOnline extends DB_Contact{
 		htDTL.put("UUID",			nz(rs.getString("UUID")).trim());
 		htDTL.put("INSURANCE_TYPE",	nz(rs.getString("INSURANCE_TYPE")));
 		htDTL.put("REFNO",			nz(rs.getString("REFNO")));
-		htDTL.put("BTN_TRANS_REF",	nz(rs.getString("BTN_TRANS_REF")));
+		htDTL.put("ITR_NO",	nz(rs.getString("ITR_NO")));
 		htDTL.put("CNCODE",			nz(rs.getString("CNCODE")));
 		htDTL.put("POLICY_NO",		nz(rs.getString("POLICY_NO")));
 		htDTL.put("NO_WORKER",		nz(rs.getString("NO_WORKER")));
@@ -1235,7 +1235,7 @@ public class FWCMSOnline extends DB_Contact{
 	}
 
 	private static final String DTL_COLUMNS =
-						 "UUID,INSURANCE_TYPE,REFNO,BTN_TRANS_REF,CNCODE,POLICY_NO,NO_WORKER,"+
+						 "UUID,INSURANCE_TYPE,REFNO,ITR_NO,CNCODE,POLICY_NO,NO_WORKER,"+
 						 "SUM_INSURED,GROSS_PREMIUM,REBATE_AMT,SERVICE_TAX,STAMP_DUTY,"+
 						 "SERVICE_FEE,NET_PREMIUM,EFF_DATE,EXP_DATE,ISS_DATE,INS_STATUS,"+
 						 "REQ_TIMESTAMP,RESP_TIMESTAMP";

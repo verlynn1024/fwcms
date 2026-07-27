@@ -135,9 +135,9 @@
         double dSTAXPCT = iqBackOutPct(dSTAX, dGPREM - dREBATE);
 
         /* FWCMSREFNO on the class tables is Bestinet's ITR, which lives in
-           BTN_TRANS_REF only — TB_FWCMS_ONLINE_DTL.REFNO is the portal's own
+           ITR_NO only — TB_FWCMS_ONLINE_DTL.REFNO is the portal's own
            quotation running number (Q00001…). */
-        String FWCMSREF = (String) htDTL.get("BTN_TRANS_REF");
+        String FWCMSREF = (String) htDTL.get("ITR_NO");
 
         String sUKEY = "";
         try{
@@ -295,9 +295,9 @@
         double dSTAXPCT = iqBackOutPct(dSTAX, dGPREM - dREBATE);
 
         /* FWCMSREFNO on the class tables is Bestinet's ITR, which lives in
-           BTN_TRANS_REF only — TB_FWCMS_ONLINE_DTL.REFNO is the portal's own
+           ITR_NO only — TB_FWCMS_ONLINE_DTL.REFNO is the portal's own
            quotation running number (Q00001…). */
-        String FWCMSREF = (String) htDTL.get("BTN_TRANS_REF");
+        String FWCMSREF = (String) htDTL.get("ITR_NO");
 
         String sUKEY = "";
         try{

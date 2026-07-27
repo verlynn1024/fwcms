@@ -41,8 +41,8 @@
 --    that journey. A single Bestinet submission can buy FWIG and FWHS at once,
 --    and each has its OWN Bestinet enquiry, its own premium and its own cover
 --    note. Exists because none of that fits on the journey row. Carries the
---    Bestinet ITR in BTN_TRANS_REF, the portal's own product reference in
---    REFNO, and after payment the class-table CNCODE.
+--    Bestinet ITR in ITR_NO, the portal's own product reference in REFNO,
+--    and after payment the class-table CNCODE.
 --
 -- 3. TB_FWCMS_ONLINE_POLICY (NEW) — one row per logical policy. This is the
 --    level that was missing: one FWHS product can cover several policies,
@@ -74,15 +74,15 @@
 -- ==============
 --   TB_FWCMS_ONLINE.REFNO          ePLKS/FWCMS/QBAD1234567   Bestinet's, shown
 --                                                            as Application No.
---   TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF  PIG25TESTSINGLE01     Bestinet's ITR
+--   TB_FWCMS_ONLINE_DTL.ITR_NO         PIG25TESTSINGLE01     Bestinet's ITR
 --   TB_FWCMS_ONLINE_DTL.REFNO          Q00001                portal, product
 --                                                            (= its 1st policy)
 --   TB_FWCMS_ONLINE_POLICY.POLICY_REF  Q00001, Q00002        portal, policy
 --   WORKER.POLICY_ID + POLICY_WORKER_SEQ -> Q00001-001       portal, worker
 --
 -- DTL.REFNO previously held a second copy of the ITR — the same value as
--- BTN_TRANS_REF, identifying nothing of the portal's own record. That is what
--- this migration replaces.
+-- ITR_NO, identifying nothing of the portal's own record. That is what this
+-- migration replaces.
 --
 -- Cover notes are unaffected: CNCODE is still generated per product after
 -- payment by the legacy DB_FWIG / DB_FWHS generators and is deliberately NOT
@@ -202,23 +202,32 @@ CREATE INDEX IX_FWCMS_ONL_WRK_POL ON TB_FWCMS_ONLINE_WORKER (POLICY_ID);
 -- 5. Existing data
 -- ============================================================================
 
--- 5a. Rows written before this change carry the ITR in REFNO and, for enquiry
---     legs that never got a response, nothing in BTN_TRANS_REF. Copy it across
---     so BTN_TRANS_REF is the single home of the Bestinet reference: the
---     class-table issuance and the guarantee letter read it and nothing else.
+-- 5a. The column that holds the Bestinet ITR used to be called BTN_TRANS_REF,
+--     a name that says where the value came from (the Bestinet transaction)
+--     rather than what it is. It is the ITR the whole business speaks in, so
+--     the column now says so. Catalog-only change — the data is untouched and
+--     no REORG is needed — but every static package and view over the table
+--     must be revalidated, and the rename must run BEFORE 5b below.
+ALTER TABLE TB_FWCMS_ONLINE_DTL
+    RENAME COLUMN BTN_TRANS_REF TO ITR_NO;
+
+-- 5b. Rows written before this change carry the ITR in REFNO and, for enquiry
+--     legs that never got a response, nothing in ITR_NO. Copy it across so
+--     ITR_NO is the single home of the Bestinet reference: the class-table
+--     issuance and the guarantee letter read it and nothing else.
 UPDATE TB_FWCMS_ONLINE_DTL
-   SET BTN_TRANS_REF = REFNO
- WHERE (BTN_TRANS_REF IS NULL OR TRIM(BTN_TRANS_REF) = '')
+   SET ITR_NO = REFNO
+ WHERE (ITR_NO IS NULL OR TRIM(ITR_NO) = '')
    AND REFNO IS NOT NULL
    AND TRIM(REFNO) <> '';
 
--- 5b. Historical REFNO values are LEFT AS THEY ARE — they are the reference
+-- 5c. Historical REFNO values are LEFT AS THEY ARE — they are the reference
 --     those journeys were transacted under, and renumbering them would break
 --     the audit trail. New rows get Q numbers; re-enquiring an old journey
 --     backfills one through FWCMSOnline.ensureQuotationRef. Rows still on the
 --     old scheme:
 --
---     SELECT UUID, INSURANCE_TYPE, REFNO, BTN_TRANS_REF, INS_STATUS
+--     SELECT UUID, INSURANCE_TYPE, REFNO, ITR_NO, INS_STATUS
 --       FROM TB_FWCMS_ONLINE_DTL WHERE REFNO NOT LIKE 'Q%'
 --      ORDER BY DTL_ID DESC WITH UR;
 --
@@ -231,7 +240,7 @@ UPDATE TB_FWCMS_ONLINE_DTL
 -- 6. Everyday maintenance: one journey, all four levels
 -- ============================================================================
 --  SELECT t.REFNO AS APPLICATION_NO,
---         d.INSURANCE_TYPE, d.REFNO AS PRODUCT_REF, d.BTN_TRANS_REF AS ITR,
+--         d.INSURANCE_TYPE, d.REFNO AS PRODUCT_REF, d.ITR_NO,
 --         d.CNCODE,
 --         p.POLICY_REF, p.NATIONALITY, p.COVER_FROM, p.COVER_TO, p.NO_WORKER,
 --         p.POLICY_REF || '-' ||
