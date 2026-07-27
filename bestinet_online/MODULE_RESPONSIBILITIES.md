@@ -32,7 +32,7 @@ Public surface, grouped by caller:
 
 | Group | Methods | Called from |
 | --- | --- | --- |
-| Journey writes | `insertFWCMSONLINETRANS`, `getFWCMSONLINETRANSCount`, `updateFWCMSONLINETRANSEnquiry`, `…Employer`, `…ImmiAddress`, `…Immi`, `…Total`, `…Payment`, `…Status` | `check_fwcms_online.jsp`, `pop_fwcms_getData.jsp`, `pop_fwcms_worker_detail_rep.jsp`, `pop_fwcms_capturePremium.jsp`, `pop_fwcms_payment_result.jsp` |
+| Journey writes | `insertFWCMSONLINETRANS`, `getFWCMSONLINETRANSCount`, `updateFWCMSONLINETRANSEnquiry`, `…Employer`, `…Immi`, `…Total`, `…Payment`, `…Status` | `check_fwcms_online.jsp`, `pop_fwcms_getData.jsp`, `pop_fwcms_worker_detail_rep.jsp`, `pop_fwcms_capturePremium.jsp`, `pop_fwcms_payment_result.jsp` |
 | Product writes | `insertFWCMSONLINEDTL`, `updateFWCMSONLINEDTLRequest`, `…Enquiry`, `…Premium`, `…Period`, `…Error`, `…Issued` | `check_fwcms_online.jsp`, `pop_fwcms_capturePremium.jsp`, `pop_fwcms_issue_quotation.jsp` |
 | Policy / worker | `syncFWCMSONLINEPOLICY`, `getFWCMSONLINEPOLICYRefs`, `deleteFWCMSONLINEWORKER`, `insertFWCMSONLINEWORKER`, `getQuotationRef` | `pop_fwcms_capturePremium.jsp`, `pop_fwcms_worker_detail.jsp` |
 | Reads | `getFWCMSONLINETRANS`, `getFWCMSONLINEDTL`, `getFWCMSONLINEDTLList`, `getFWCMSONLINEWORKERList` | issuance page, payment result, every print template |
@@ -77,7 +77,7 @@ In flow order.
 | `pop_fwcms_worker_detail.jsp` | Container view for the worker-detail popup. Owns only what is common to both products — session guard, the shared `vAllWorkers` / `vMergedWorkers` structures, layout, modals. Persists nothing. |
 | `fwig_worker_details.jsp` | FWIG fragment of the above. Included **dynamically** (`jsp:include`) so it compiles independently; all data crosses as `wd_`-prefixed request attributes, in two phases (`wdPhase=load`, `wdPhase=render`). |
 | `fwhs_worker_details.jsp` | FWHS fragment, same contract. Its `load` phase runs **after** FWIG's, because it folds the FWIG rows queued in `wd_mergeQueue` into the merged table. |
-| `pop_fwcms_worker_detail_rep.jsp` | The worker-detail page's only write endpoint (AJAX, `text/plain`). Persists the agent-chosen immigration branch (`updateFWCMSONLINETRANSImmi` + `…ImmiAddress`) **before** payment. Issuance no longer runs here. |
+| `pop_fwcms_worker_detail_rep.jsp` | The worker-detail page's only write endpoint (AJAX, `text/plain`). Persists the agent-chosen immigration branch code (`updateFWCMSONLINETRANSImmi`) **before** payment. Issuance no longer runs here. |
 | `pop_fwcms_payment.jsp` | Collects card details and forwards to the gateway. No quotation exists at this point. |
 | `pop_fwcms_payment_result.jsp` | Unified result page (`PAYMENT=Y` / `PAYMENT=F`). On success stamps `updateFWCMSONLINETRANSPayment` PAID, then `jsp:include`s the issuance page, then offers the Print links. |
 | `pop_fwcms_issue_quotation.jsp` | **Post-payment quotation issuance.** Drives `DB_FWIG` / `DB_FWHS` directly to write the FWCMS class tables and generate the cover-note number (`getCoverNoteFloat2`), each product inside one `setAutoCommitOff → conCommit` transaction. Uses `FWCMSOnline` only for the tracking reads and the `updateFWCMSONLINEDTLIssued` / `…TRANSStatus` stamp-back. Idempotent: a product already carrying a real (non-`MCK`) cover note is skipped. Falls back to an `MCK…` stamp when the float/running-number rows are not seeded. |

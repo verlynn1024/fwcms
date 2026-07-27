@@ -193,12 +193,16 @@ portal tracking (and the chosen immigration branch) into `TB_FWCMS_ONLINE`.
 When the Bestinet enquiry carries no immigration branch (`immigrationBranchCode`
 blank / `"N/A"`), the worker-detail page shows a **required** dropdown of the
 master list (`TB_FWCMS_CODE` `TYPE='IMMI_CODE'`). The chosen branch is submitted
-to `pop_fwcms_worker_detail_rep.jsp`, which resolves its description (and the G7
-`IMMI_ADDRESS` when seeded) and stamps `IMMI_CODE` / `IMMI_DESCP` /
-`IMMI_ADDRESS` onto the journey's `TB_FWCMS_ONLINE` row via
-`updateFWCMSONLINETRANSImmi` / `updateFWCMSONLINETRANSImmiAddress` — **before**
-`issueMainTables` runs, so the branch is carried into the FWIG main tables (the
-Guarantee Letter's addressee reads it from there).
+to `pop_fwcms_worker_detail_rep.jsp`, which resolves its description and stamps
+`IMMI_CODE` / `IMMI_DESCP` onto the journey's `TB_FWCMS_ONLINE` row via
+`updateFWCMSONLINETRANSImmi` — **before** `issueMainTables` runs, so the branch
+is carried into the FWIG main tables.
+
+The portal stores the **branch code only**, never the mailing address. The
+Guarantee Letter's addressee block is resolved at print time from
+`TB_IMMIGRATION` by `IMMI_CODE` (`FWCMSOnline.getFWIGData`, which also converts
+the stored `¶` separators to newlines); `TB_FWIGMAST.IMMI_ADDRESS` is seeded with
+the branch name purely as the fallback for codes absent from `TB_IMMIGRATION`.
 
 ### Controller: `FWCMSOnline` (thin)
 

@@ -647,38 +647,6 @@ public class FWCMSOnline extends DB_Contact{
 			return RowsAffected;
 	}
 
-	/* Immigration office mailing address (the guarantee letter's addressee
-	   block), resolved by the caller from TB_FWCMS_CODE TYPE='IMMI_ADDRESS':
-	   office name on the first line, \n-separated. */
-	public int updateFWCMSONLINETRANSImmiAddress(String IMMIADDRESS,
-								String UPDATEDBY,String UUID)
-								throws Exception{
-
-			IMMIADDRESS = emptyToNull(IMMIADDRESS);
-			String NOW = now();
-			String myQuery	= "UPDATE TB_FWCMS_ONLINE SET IMMI_ADDRESS=?,"+
-							  "UPDATED_BY=?,UPDATED_DATE=? "+
-							  "WHERE UUID=?";
-			pstmt = myConn.prepareStatement(myQuery);
-			pstmt.setString(1,IMMIADDRESS);
-			pstmt.setString(2,UPDATEDBY);
-			pstmt.setString(3,NOW);
-			pstmt.setString(4,UUID);
-			RowsAffected = pstmt.executeUpdate();
-			pstmt.close();
-
-			if (RowsAffected > 0){
-				pstmt2 = new PreparedStatementLogable(myConn,myQuery);
-				pstmt2.setString(1,nz(IMMIADDRESS));
-				pstmt2.setString(2,UPDATEDBY);
-				pstmt2.setString(3,NOW);
-				pstmt2.setString(4,UUID);
-				insertSQLLog2("SQL",pstmt2.toString(),"","","","");
-			}
-
-			return RowsAffected;
-	}
-
 	/* Period of cover (CHAR(8) yyyyMMdd), written at premium capture. */
 	public int updateFWCMSONLINEDTLPeriod(String EFFDATE,String EXPDATE,
 								String UPDATEDBY,String UUID,String INSTYPE)
@@ -1192,7 +1160,7 @@ public class FWCMSOnline extends DB_Contact{
 						 "EMPLOYER_ROC,EMPLOYER_PHONE,EMPLOYER_EMAIL,"+
 						 "EMPLOYER_NAME,EMPLOYER_ADDRESS_1,EMPLOYER_ADDRESS_2,"+
 						 "EMPLOYER_ADDRESS_3,EMPLOYER_ADDRESS_4,EMPLOYER_POSTCODE,EMPLOYER_STATE,"+
-						 "NATURE_BUSINESS,NATURE_BUSINESS_DESCP,IMMI_CODE,IMMI_DESCP,IMMI_ADDRESS,"+
+						 "NATURE_BUSINESS,NATURE_BUSINESS_DESCP,IMMI_CODE,IMMI_DESCP,"+
 						 "ENTRY_TIMESTAMP,EXIT_TIMESTAMP,TRANS_STATUS,PURCHASE_STATUS,"+
 						 "PAYMENT_STATUS,TOTAL_AMOUNT,PAYMENT_REF,PAYMENT_METHOD,"+
 						 "CREATED_DATE,UPDATED_DATE "+
@@ -1223,7 +1191,6 @@ public class FWCMSOnline extends DB_Contact{
 			htTXN.put("NATURE_BUSINESS_DESCP",	nz(rs.getString("NATURE_BUSINESS_DESCP")));
 			htTXN.put("IMMI_CODE",				nz(rs.getString("IMMI_CODE")));
 			htTXN.put("IMMI_DESCP",				nz(rs.getString("IMMI_DESCP")));
-			htTXN.put("IMMI_ADDRESS",			nz(rs.getString("IMMI_ADDRESS")));
 			htTXN.put("ENTRY_TIMESTAMP",		nz(rs.getString("ENTRY_TIMESTAMP")));
 			htTXN.put("EXIT_TIMESTAMP",			nz(rs.getString("EXIT_TIMESTAMP")));
 			htTXN.put("TRANS_STATUS",			nz(rs.getString("TRANS_STATUS")));
