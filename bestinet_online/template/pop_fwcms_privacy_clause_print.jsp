@@ -18,10 +18,17 @@
      data-access layer swapped to the Bestinet online-portal tables: the
      insured NAME comes from TB_FWCMS_ONLINE (EMPLOYER_NAME) and the cover
      note from TB_FWCMS_ONLINE_DTL (CNCODE) via the same DAO reads the
-     guarantee-letter template uses. The online journey does not capture a
-     marketing-consent flag, so CFMKT_IND / CONTACT_TYPE default to "" and
-     the standard Privacy Clause branch (1.1 - 1.5) renders - the same
-     branch an agent-issued FWIG document shows. TYPE is not MOTOR here, so
+     guarantee-letter template uses. CONTACT_TYPE is fixed to "B": every
+     quotation generated from Bestinet is a business (employer) policy, so
+     the business-contact branch of pop_incl_CFMKT.jsp - clause 1.1 - 1.4
+     plus the Customer Contact Centre table - is the branch that always
+     renders here. Because pop_incl_CFMKT.jsp tests CONTACT_TYPE first, the
+     CFMKT_IND "Y" / "N" branches below it are unreachable in this portal;
+     they are kept only so this file stays a faithful port of the legacy
+     include. The Personal Data Protection Act 2010 consent captured on
+     pop_fwcms_worker_detail.jsp is therefore recorded, not rendered: it is
+     issued onto TB_FWIGSCH / TB_FWHSSCH.CFMKT_IND and selects no branch on
+     this document. TYPE is not MOTOR here, so
      the vehicle line and the kib-address block never render, and GUARANTEE
      is forced "Y" so the in-body logo spacer is suppressed (the generator
      supplies the Liberty letterhead via the logo-height argument, as it
@@ -92,13 +99,14 @@
 		FWCMSOnline.takeDown();
 	}
 
-	/* Printing model - derived from the online tables. The online journey
-	   has no marketing-consent capture, so CFMKT_IND / CONTACT_TYPE stay ""
-	   (standard Privacy Clause branch), TYPE is not MOTOR, and GUARANTEE=Y
-	   suppresses the in-body logo spacer. */
+	/* Printing model - derived from the online tables. CONTACT_TYPE="B"
+	   selects the business-contact clause, the only branch this portal
+	   renders (every Bestinet quotation is an employer policy); it is tested
+	   first, so CFMKT_IND never selects anything here and stays "". TYPE is
+	   not MOTOR, and GUARANTEE=Y suppresses the in-body logo spacer. */
 	String TYPE			= "";		// vehicle type - FWIG is never MOTOR
-	String CFMKT_IND	= "";		// no marketing-consent flag in the online journey
-	String CONTACT_TYPE	= "";		// no business-branch consent flag either
+	String CFMKT_IND	= "";		// unused - the CONTACT_TYPE="B" branch wins first
+	String CONTACT_TYPE	= "B";		// every Bestinet quotation is a business policy
 	String VEHNO		= "";		// motor only
 	String GUARANTEE	= "Y";		// letterhead supplied by the generator, skip spacer
 

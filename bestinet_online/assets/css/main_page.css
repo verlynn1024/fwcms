@@ -104,6 +104,35 @@
     color: var(--c-yellow);
 }
 
+/* ─── PDPA Consent Box (sits above the Declaration box) ─────────────
+   Same amber container and body text as .lb-declaration below, so the
+   two checks in the Declaration card read as one block. */
+.lb-consent {
+    background: #FFFBEB;
+    border: 1px solid #FDE68A;
+    border-radius: var(--radius);
+    padding: .9rem 1.1rem;
+    margin-bottom: .7rem;
+}
+.lb-consent-text {
+    font-size: .82rem; color: #78350F;
+    line-height: 1.55; margin: 0 0 .6rem;
+}
+.lb-consent-options {
+    display: flex; align-items: center; gap: 1.4rem;
+}
+.lb-consent-opt {
+    display: inline-flex; align-items: center; gap: .4rem;
+    font-size: .82rem; font-weight: 600;
+    color: #78350F; cursor: pointer; margin: 0;
+    line-height: 1.55;
+}
+.lb-consent-opt input[type="radio"] {
+    width: 17px; height: 17px;
+    flex-shrink: 0;
+    accent-color: var(--c-navy); cursor: pointer;
+}
+
 /* ─── Declaration Box ───────────────────────────────────────────── */
 .lb-declaration {
     background: #FFFBEB;

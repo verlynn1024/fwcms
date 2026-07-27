@@ -20,7 +20,18 @@
     All the pre-payment TB_FWCMS_ONLINE / TB_FWCMS_ONLINE_* tracking writes
     (enquiry, premium capture, worker snapshot) are unchanged.
 
-    One thing happens here:
+    Two things happen here:
+
+      0. PDPA 2010 consent — the worker-detail page makes the agent answer
+         Yes/No to the Personal Data Protection Act 2010 marketing-consent
+         statement shown above the declaration tick. The answer is CFMKT_IND,
+         the marketing-consent indicator of the legacy Privacy Clause include
+         pop_incl_CFMKT.jsp. It arrives as the "cfmkt_ind" parameter
+         ("Y" / "N") and is kept on the session as SES_FWCMS_CFMKT_IND, from
+         where the post-payment issuance writes it to TB_FWIGSCH /
+         TB_FWHSSCH. It is recorded only: the portal's Privacy Clause always
+         renders the CONTACT_TYPE="B" business-contact branch, so no printed
+         document branches on this value.
 
       1. Immigration branch — when the Bestinet enquiry carried no immigration
          branch (blank / "N/A"), the worker-detail page shows a required
@@ -59,6 +70,19 @@
        re-stamp. */
     String immiCode = common.setNullToString(request.getParameter("immi")).trim();
     if (immiCode.equalsIgnoreCase("N/A")) immiCode = "";
+
+    /* PDPA 2010 marketing-consent answer (the CFMKT_IND indicator) from the
+       worker-detail page's Yes/No radios. The page will not POST without an
+       answer, so anything other than "Y"/"N" here is a malformed request —
+       fall back to "N" (no consent), the safer reading. Stashed on the
+       session, not written to the tracking row: the class-table insert that
+       carries it (CFMKT_IND on TB_FWIGSCH / TB_FWHSSCH) runs post-payment in
+       pop_fwcms_issue_quotation.jsp, which reads it back from here. */
+    String cfmktInd = common.setNullToString(request.getParameter("cfmkt_ind")).trim().toUpperCase();
+    if (!cfmktInd.equals("Y") && !cfmktInd.equals("N")) cfmktInd = "N";
+    session.setAttribute("SES_FWCMS_CFMKT_IND", cfmktInd);
+    System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
+        + " stage=pdpa-consent CFMKT_IND=" + cfmktInd);
 
     if (!FWCMS_UUID.equals("")) {
         try {
