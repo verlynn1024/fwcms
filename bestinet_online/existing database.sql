@@ -53,7 +53,7 @@ DTL_ID                          SYSIBM    BIGINT                       8     0 N
 UUID                            SYSIBM    CHARACTER                   36     0 No
 INSURANCE_TYPE                  SYSIBM    VARCHAR                     10     0 No
 REFNO                           SYSIBM    VARCHAR                     60     0 No
-BTN_TRANS_REF                   SYSIBM    VARCHAR                     60     0 Yes
+ITR_NO                          SYSIBM    VARCHAR                     60     0 Yes
 CNCODE                          SYSIBM    VARCHAR                     30     0 Yes
 POLICY_NO                       SYSIBM    VARCHAR                     30     0 Yes
 NO_WORKER                       SYSIBM    VARCHAR                      5     0 Yes

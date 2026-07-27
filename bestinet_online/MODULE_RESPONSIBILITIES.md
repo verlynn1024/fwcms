@@ -144,7 +144,7 @@ Neither is referenced by any production page.
 | Value | Lives in | What it is |
 | --- | --- | --- |
 | Application No. | `TB_FWCMS_ONLINE.REFNO` | Bestinet's `plksNumber` (`ePLKS/FWCMS/…`) |
-| Bestinet ITR | `TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF` | the `transactionReferenceNumber` the enquiry was submitted with — this, and only this, is what `TB_FWIGSCH` / `TB_FWHSSCH.FWCMSREFNO` carries |
+| Bestinet ITR | `TB_FWCMS_ONLINE_DTL.ITR_NO` | the `transactionReferenceNumber` the enquiry was submitted with — this, and only this, is what `TB_FWIGSCH` / `TB_FWHSSCH.FWCMSREFNO` carries |
 | Quotation ref | `TB_FWCMS_ONLINE_DTL.REFNO`, `…_POLICY.POLICY_REF` | the portal's own pre-payment running number, `Q00001`; a worker's is `Q00001-001` |
 
 ---

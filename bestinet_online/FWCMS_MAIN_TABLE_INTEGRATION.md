@@ -438,13 +438,13 @@ TB_FWCMS_ONLINE            journey   ePLKS/FWCMS/QBAD1234567   (Bestinet App. No
 | --- | --- |
 | `TB_FWCMS_ONLINE.REFNO` | Bestinet Application No. — **unchanged** |
 | `TB_FWCMS_ONLINE_DTL.REFNO` | product master = its first policy's `POLICY_REF` |
-| `TB_FWCMS_ONLINE_DTL.BTN_TRANS_REF` | the Bestinet ITR (`PIG25…`), its only home |
+| `TB_FWCMS_ONLINE_DTL.ITR_NO` | the Bestinet ITR (`PIG25…`), its only home |
 | `TB_FWCMS_ONLINE_POLICY.POLICY_REF` | **the policy's running number** |
 | `WORKER.POLICY_ID` + `POLICY_WORKER_SEQ` | resolve to the worker's `Q00001-001` |
 
 `DTL.REFNO` previously held a second copy of the ITR — the same value as
-`BTN_TRANS_REF`, identifying nothing of the portal's own record. That is what
-this change replaces.
+`ITR_NO`, identifying nothing of the portal's own record. That is what this
+change replaces.
 
 `CNCODE` is **not** stored on the policy rows: cover notes are still generated
 per product after payment by the legacy `DB_FWIG` / `DB_FWHS` generators (§5).
@@ -484,7 +484,7 @@ not a `Q` number.
 
 Everything needing Bestinet's ITR — `issueFWIG` / `issueFWHS`
 (`TB_FWIGSCH` / `TB_FWHSSCH`.`FWCMSREFNO`), `getFWIGGLPrintDataOnline`,
-`pop_fwcms_issue_quotation.jsp` — reads `BTN_TRANS_REF` only; the old `REFNO`
+`pop_fwcms_issue_quotation.jsp` — reads `ITR_NO` only; the old `REFNO`
 fallbacks were removed, since that column no longer holds an ITR.
 
 The worker-detail page's Policy Details table shows each policy's stored
