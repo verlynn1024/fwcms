@@ -191,9 +191,12 @@
 
             /* 3. TB_FWIGMAST — ^-delimited worker lists + per-nationality
                   summary + the immigration addressee (chosen branch included) */
+            /* The portal stores only the branch code + description; the
+               addressee block is resolved from TB_IMMIGRATION by IMMI_CODE
+               when the Guarantee Letter is read back (FWCMSOnline.getFWIGData),
+               so seed TB_FWIGMAST with the branch name as the fallback. */
             String IMMI_NAME    = (String) htTXN.get("IMMI_DESCP");
-            String IMMI_ADDRESS = (String) htTXN.get("IMMI_ADDRESS");
-            if (IMMI_ADDRESS.equals("")) IMMI_ADDRESS = IMMI_NAME;
+            String IMMI_ADDRESS = IMMI_NAME;
 
             int iWorkers = alWorkers.size();
             String EMP_NAME        = iqJoinWorkerField(comm, alWorkers, "NAME", false);

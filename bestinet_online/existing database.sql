@@ -41,9 +41,8 @@ EMPLOYER_ADDRESS_3              SYSIBM    VARCHAR                    100     0 Y
 EMPLOYER_ADDRESS_4              SYSIBM    VARCHAR                    100     0 Yes
 EMPLOYER_POSTCODE               SYSIBM    VARCHAR                     10     0 Yes
 EMPLOYER_STATE                  SYSIBM    VARCHAR                     30     0 Yes
-IMMI_ADDRESS                    SYSIBM    VARCHAR                    500     0 Yes
 
-  39 record(s) selected.
+  38 record(s) selected.
 
 db2 => describe table TB_FWCMS_ONLINE_DTL
 
