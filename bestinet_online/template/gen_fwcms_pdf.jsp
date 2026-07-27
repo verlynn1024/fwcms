@@ -1,4 +1,4 @@
-<%@ page language="java" import="java.io.*,java.net.*,java.util.*,java.util.Date,java.text.SimpleDateFormat" contentType="text/html;charset=iso-8859-1"%><%--
+<%@ page language="java" import="java.io.*,java.net.*,java.util.*,java.util.Date,java.text.SimpleDateFormat,com.lowagie.text.Document,com.lowagie.text.Rectangle,com.lowagie.text.pdf.PdfContentByte,com.lowagie.text.pdf.PdfImportedPage,com.lowagie.text.pdf.PdfReader,com.lowagie.text.pdf.PdfWriter,org.apache.pdfbox.multipdf.PDFMergerUtility,org.apache.pdfbox.pdmodel.PDDocument,org.apache.pdfbox.pdmodel.PDDocumentInformation" contentType="text/html;charset=iso-8859-1"%><%--
 --%><jsp:useBean id="RP_html2pdf" scope="page" class="com.rexit.easc.RP_html2pdf" /><%--
 --%><jsp:useBean id="common" scope="page" class="com.rexit.easc.common" /><%--
 --%><jsp:useBean id="DB_Template" scope="page" class="com.rexit.easc.DB_Template" /><%--
@@ -8,9 +8,12 @@
      Liberty Insurance Bestinet Online Portal - FWCMS Printing Module
      (design doc: docs/FWCMS_PRINTING_MODULE_DESIGN.md, section 2)
 
-     THE ONLY ENTRY POINT of the FWCMS printing module. Orchestration
-     only - no document layout, no SQL (both live in FWCMSOnline and the
-     pop_fwcms_*_print.jsp document templates).
+     THE ONLY ENTRY POINT of the FWCMS printing module. Orchestration and
+     PDF assembly - no SQL (that lives in FWCMSOnline) and no document
+     layout (that lives in the pop_fwcms_*_print.jsp templates). The
+     letterhead / footer builders, marker scrape, PAGEBREAK split and the
+     iText / PDFBox merges are declared at the top of this page, as in the
+     legacy generators gen_cn_FWIG_html2pdf_rep.jsp / gen_cn_fwhs_html2pdf_rep.jsp.
 
      Input:
        DOC   FWIG_SCH | FWIG_GL | FWHS_SCH | RECEIPT
@@ -48,6 +51,435 @@
 		out.println("<div style=\"font-size:.88rem;color:#555555;\">" + message + "</div>");
 		out.println("<div style=\"font-size:.78rem;color:#9CA3AF;margin-top:1.2rem;\">Please close this tab and try again. If the problem persists, contact Liberty Insurance support.</div>");
 		out.println("</div></body></html>");
+	}
+
+	/* ═══════════════════════════════════════════════════════════════════════
+	   PRINT HELPERS — presentation only: the letterhead / footer strings, the
+	   marker scrape, the PAGEBREAK split and the two PDF merges. None of this
+	   touches the database and no other page calls it, so it lives here rather
+	   than in FWCMSOnline (which stays SQL-only) — the same shape as the legacy
+	   generators gen_cn_FWIG_html2pdf_rep.jsp / gen_cn_fwhs_html2pdf_rep.jsp.
+	   The string building is character-identical to those generators so the
+	   portal output matches an agent-issued document.
+
+	   The bean-backed helpers take `common comm` as a parameter: JSP
+	   declarations become servlet members and cannot see page beans (the same
+	   reason pop_fwcms_issue_quotation.jsp passes its beans in).
+	   ═══════════════════════════════════════════════════════════════════════ */
+
+	/* Appendix inventory, resolved against configk.prop template_banner_path at
+	   merge time. The Important Notice is deliberately absent — it is
+	   JSP-rendered at print time, see mergeAppendix. */
+	private static final String APPENDIX_PRIVACY_CLAUSE		= "Privacy_Clause.pdf";
+	private static final String APPENDIX_PRIVACY_ENG		= "Privacy_Notice_Eng.pdf";
+	private static final String APPENDIX_PRIVACY_BM			= "Privacy_Notice_BM.pdf";
+	private static final String APPENDIX_PRIVACY_ENG_OLD	= "Privacy_Notice_Eng_Old.pdf";
+	private static final String APPENDIX_PRIVACY_BM_OLD		= "Privacy_Notice_BM_Old.pdf";
+	private static final String APPENDIX_MERGED_KEY			= "FWCMS_APPENDIX_MERGED";
+
+	private static final String PIDM_FOOTER_TEXT =
+		"The benefit(s) payable under this eligible policy is protected by PIDM up to limits. "+
+		"Please refer to PIDM TIPS Brochure or contact Liberty General Insurance Berhad or PIDM (visit www.pidm.gov.my).";
+
+	/* Font size change from html to px, applied to every grabbed template. */
+	private String normaliseFontSizes(String HTML){
+		if (HTML == null) return "";
+		HTML = HTML.replace("size=\"-1\"","size=4");
+		HTML = HTML.replace("size=\"1\"","size=6");
+		HTML = HTML.replace("size=\"1.5\"","size=7");
+		HTML = HTML.replace("size=\"2\"","size=8");
+		HTML = HTML.replace("size=\"2.25\"","size=9");
+		HTML = HTML.replace("size=\"2.5\"","size=10");
+		HTML = HTML.replace("size=\"3\"","size=12");
+		HTML = HTML.replace("size=\"4\"","size=16");
+		HTML = HTML.replace("size=\"5\"","size=20");
+		HTML = HTML.replace("size=\"6\"","size=24");
+		HTML = HTML.replace("size=\"7\"","size=28");
+		return HTML;
+	}
+
+	/* Control markers the document templates emit as HTML comments:
+	   <!--HEADERn text-->, <!--CATEGOn text-->, <!--REFMAIn text-->. Every key
+	   is always present ("" when the template does not emit the marker). */
+	private Hashtable scrapeMarkers(String HTML){
+		Hashtable htMarkers = new Hashtable();
+		String[] keys = {"HEADER1","HEADER2","HEADER3","HEADER4",
+						 "CATEGO1","CATEGO2","REFMAI1","REFMAI2"};
+		if (HTML == null) HTML = "";
+		for (int i = 0; i < keys.length; i++){
+			String value = "";
+			int idxStart = HTML.indexOf("<!--" + keys[i]);
+			if (idxStart >= 0){
+				int idxEnd = HTML.indexOf("-->", idxStart);
+				// legacy: line.substring(12, line.length()-3) — payload
+				// starts after "<!--KEYNAME " (11 marker chars + 1 space)
+				int idxPayload = idxStart + 4 + keys[i].length() + 1;
+				if (idxEnd > idxPayload){
+					value = HTML.substring(idxPayload, idxEnd);
+				}
+			}
+			htMarkers.put(keys[i], value);
+		}
+		return htMarkers;
+	}
+
+	/* <PAGEBREAK_PRO> / <PAGEBREAK_INC> sectioning: schedule body / product
+	   info / important-notice section. Index-for-index port of the legacy split
+	   (including the 12-character lead-in skip and the "" placeholder section)
+	   so section counts and contents stay identical. */
+	private ArrayList splitPagebreaks(String HTML){
+		ArrayList alHTML = new ArrayList();
+		if (HTML == null) HTML = "";
+		String testHTML	= HTML;
+		int idxHTML		= 0;
+		int idxHTML2	= 0;
+		int idxHTML3	= 0;
+
+		if (testHTML.length() > 0){
+			idxHTML2 = testHTML.indexOf("<PAGEBREAK_PRO></PAGEBREAK_PRO>");
+			idxHTML3 = testHTML.indexOf("<PAGEBREAK_INC></PAGEBREAK_INC>");
+			if (idxHTML2 > 0){
+				String testHTML2 = testHTML.substring(idxHTML+12, idxHTML2);
+				alHTML.add("<html>" + testHTML2 + "</html>");
+
+				idxHTML = testHTML.indexOf("</PAGEBREAK_PRO>");
+				testHTML2 = testHTML.substring(idxHTML+16, idxHTML3);
+				if (testHTML2.length() > 0){
+					alHTML.add(testHTML2);
+				}
+
+				idxHTML = testHTML.indexOf("</PAGEBREAK_INC>");
+				testHTML2 = testHTML.substring(idxHTML+16, testHTML.length());
+				if (testHTML2.length() > 0){
+					alHTML.add(testHTML2);
+				}
+			}
+			else{
+				if (idxHTML3 > 0){
+					String testHTML3 = testHTML.substring(idxHTML+12, idxHTML3);
+					alHTML.add("<html>" + testHTML3 + "</html>");
+					idxHTML = testHTML.indexOf("</PAGEBREAK_INC>");
+					testHTML = testHTML.substring(idxHTML+16, testHTML.length());
+					if (testHTML.length() > 0){
+						alHTML.add("");
+						alHTML.add(testHTML);
+					}
+				}
+				else{
+					if (testHTML.length() > 0){
+						alHTML.add(testHTML);
+					}
+				}
+			}
+		}
+		return alHTML;
+	}
+
+	/* First-page header — Howden agents get the company logo, everyone else the
+	   stamp-duty box with the REF_MAINPAGE lines. */
+	private String buildHeaderHTML(com.rexit.easc.common comm, boolean howdenAgent,
+								   String REF_MAINPAGE, String REF_MAINPAGE1,
+								   String CATEGORYMSG, String CATEGORYMSG1,
+								   String HEADER1, String HEADER2){
+		String headerHTML;
+		if (howdenAgent){
+			headerHTML ="<table cellspacing='0' cellpadding='0' border='0' width='100%'>";
+			headerHTML +="<tr>";
+			headerHTML+="<td width='73%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/hp_spacer.gif' height='60' width='128' align='left'></td>";
+			headerHTML+="<td width='27%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/logo-lib.png' alt='' height='50' width='140'></td>";
+		}else{
+			headerHTML ="<table cellspacing='0' cellpadding='0' border='0' width='100%'>";
+			headerHTML +="<tr>";
+			headerHTML+="<td width='86%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/hp_spacer.gif' height='60' width='128' align='left'></td>";
+			headerHTML+="<td width='14%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/stamp-duty2.gif' leading='-4' width='70' height='12'><font face='Arial' size='6'><br>"+REF_MAINPAGE+"<br>"+REF_MAINPAGE1;
+			headerHTML+="</font></td>";
+		}
+		headerHTML+="</tr>";
+		headerHTML+="</table>";
+		headerHTML+="<table cellspacing='1' cellpadding='0' width='100%' border='0' bordercolor='#000000'>";
+		for (int i = 0; i < 5; i++){
+			headerHTML+="<tr>";
+			headerHTML+="<td align='left' width='100%' valign='bottom'></td>";
+			headerHTML+="</tr>";
+		}
+		headerHTML+="<tr>";
+		headerHTML+="<td align='center' width='100%' valign='bottom'><font face='Arial' size='12'><b>"+comm.stringToHTMLString(CATEGORYMSG)+"</b></font></td>";
+		headerHTML+="</tr>";
+		headerHTML+="<tr>";
+		headerHTML+="<td align='center' width='100%' valign='bottom'><font face='Arial' size='12'><i>"+comm.stringToHTMLString(CATEGORYMSG1)+"</i></font></td></tr>";
+		headerHTML+="<br><tr><td align='left' width='100%' valign='bottom'><font face='Arial' size='8'><br><br>"+HEADER1+"<i>"+HEADER2+"</i></font></td></tr>";
+		headerHTML+="</table>";
+		return headerHTML;
+	}
+
+	/* Continuation-page header — HEADER3/HEADER4 with the cover-note number
+	   (a leading principal prefix "08" is stripped, as legacy). */
+	private String buildHeaderHTML2(com.rexit.easc.common comm, boolean howdenAgent,
+									String CATEGORYMSG, String CATEGORYMSG1,
+									String HEADER3, String HEADER4, String CNOTE){
+		String headerHTML2;
+		if (howdenAgent){
+			headerHTML2 ="<table cellspacing='0' cellpadding='0' border='0' width='100%'>";
+			headerHTML2 +="<tr>";
+			headerHTML2+="<td width='73%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/hp_spacer.gif' height='60' width='128' align='left'></td>";
+			headerHTML2+="<td width='27%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/logo-lib.png' alt='' height='50' width='140'></td>";
+			headerHTML2+="</tr>";
+			headerHTML2+="</table>";
+		}else{
+			headerHTML2 ="<table cellspacing='0' cellpadding='0' border='0' width='100%'>";
+			headerHTML2 +="<tr>";
+			headerHTML2+="<td width='78%' valign='top'><img src='../common/jpg/getjpg.jsp?fn=/hp_spacer.gif' height='60' width='128' align='left'></td>";
+			headerHTML2+="<td width='14%' valign='top'></td>";
+			headerHTML2+="<td width='8%' valign='top'></td>";
+			headerHTML2+="</tr>";
+			headerHTML2+="</table>";
+		}
+		headerHTML2+="<table cellspacing='1' cellpadding='0' width='100%' border='0' bordercolor='#000000'>";
+		for (int i = 0; i < 5; i++){
+			headerHTML2+="<tr>";
+			headerHTML2+="<td align='left' width='100%' valign='bottom'></td>";
+			headerHTML2+="</tr>";
+		}
+		headerHTML2+="<tr>";
+		headerHTML2+="<td align='center' width='100%' valign='bottom'><font face='Arial' size='12'><b>"+comm.stringToHTMLString(CATEGORYMSG)+"</b></font></td>";
+		headerHTML2+="</tr>";
+		headerHTML2+="<tr>";
+		headerHTML2+="<td align='center' width='100%' valign='bottom'><font face='Arial' size='12'><i>"+comm.stringToHTMLString(CATEGORYMSG1)+"</i></font></td></tr>";
+		if (CNOTE == null) CNOTE = "";
+		String newCNOTE = CNOTE.startsWith("08") ? CNOTE.substring(2, CNOTE.length()) : CNOTE;
+		headerHTML2+="<br><tr><td align='left' width='100%' valign='bottom'><font face='Arial' size='8'><br><br>"+HEADER3+"<i>"+HEADER4+"  "+newCNOTE+"</i></font></td></tr>";
+		headerHTML2+="</table>";
+		return headerHTML2;
+	}
+
+	/* Guarantee-letter / non-schedule documents use a bare spacer header. */
+	private String buildHeaderHTML3(){
+		String headerHTML3;
+		headerHTML3 ="<table valign='bottom' border='0' width='100%'>";
+		headerHTML3 +="<tr>";
+		headerHTML3+="<td width='78%' valign='top'></td>";
+		headerHTML3+="<td width='14%' valign='top'></td>";
+		headerHTML3+="<td width='8%' valign='top'></td>";
+		headerHTML3+="</tr>";
+		headerHTML3+="</table>";
+		return headerHTML3;
+	}
+
+	/* Footers (WITHOUTLOGO='Y' variants — the only ones the portal uses).
+	   Schedule: SUBCODE line, or blank when there is no policy number yet. */
+	private String buildFooterSubcode(String SUBCODE){
+		if (SUBCODE == null || SUBCODE.equals("")) return " ";
+		return "<table width='100%'><tr><td width='100%'><font face='Arial, Helvetica, sans-serif' size='6'>"+SUBCODE+"</font></td><tr></table>";
+	}
+
+	/* Guarantee Letter first page: the mandatory PIDM statement. */
+	private String buildFooterPIDM(String SUBCODE){
+		String footer = "<table width='100%'><tr><td width='100%'><font face='Arial, Helvetica, sans-serif' size='9'>"+PIDM_FOOTER_TEXT+"</font></td><tr></table>";
+		if (SUBCODE != null && !SUBCODE.equals("")){
+			footer +="<table width='100%'><tr><td width='100%'><font face='Arial, Helvetica, sans-serif' size='6'>"+SUBCODE+"</font></td><tr></table>";
+		}
+		return footer;
+	}
+
+	/* Howden-agent footer: registered company line + page number. */
+	private String buildFooterHowden(){
+		String size3 = "7";
+		String size4 = "5";
+		String INS_COMPANY_NAME = "Liberty General Insurance Berhad";
+		String REG_NO			= " 197801007153 (44191-P)";
+		String URL				= "www.libertyinsurance.com.my";
+
+		String footer	= "<table width='900' cellpadding='3' cellspacing='0'>";
+		footer += "<tr>";
+		footer += "<td align='left' width='40%'>";
+		footer += "<font face='Arial, Helvetica, sans-serif' size="+size3+"><b>"+INS_COMPANY_NAME+"</b></font>";
+		footer += "<font face='Arial, Helvetica, sans-serif' size="+size4+"> "+REG_NO+" </font> ";
+		footer += "</td>";
+		footer += "<td align='right' width='60%'><font face='Arial, Helvetica, sans-serif' size="+size3+" align='right'>";
+		footer +="Liberty 1 300 88 8990 (for retail and corporate use) | "+ URL;
+		footer += "</font></td>";
+		footer += "</tr></table>";
+		footer +="<table width='100%'><tr valign='bottom'><td width='34%'></td><td width='34%' align='center'><font face='Arial, Helvetica, sans-serif' size='6'>Page %%Currentpagenumber%</font></td><td width='33%' align='right'><font face='Arial, Helvetica, sans-serif' size='6'></font></td></tr></table>";
+		return footer;
+	}
+
+	/* Empty last-section footer (important-notice pages carry nothing). */
+	private String buildFooterBlank(){
+		return "<table width='100%'><tr><td width='100%'></td><tr></table>";
+	}
+
+	/* iText merge of the per-section pgN.pdf files (written by RP_html2pdf, one
+	   per non-empty section) into tempPath/<baseName>.pdf, with the same scaled
+	   import as legacy (addTemplate .5f). Unlike legacy the pgN intermediates
+	   are deleted in finally, so a failed run cannot leak them. */
+	private String mergeSections(String tempPath, String baseName, ArrayList alHTML) throws Exception{
+
+		String mergedFile = tempPath + "/" + baseName + ".pdf";
+		Document document = null;
+		try{
+			// page size from the first non-empty section
+			int firstIdx = -1;
+			for (int i = 0; i < alHTML.size(); i++){
+				if (!((String) alHTML.get(i)).equals("")){
+					firstIdx = i;
+					break;
+				}
+			}
+			if (firstIdx < 0){
+				throw new Exception("[FWCMSPRINT] mergeSections: no sections to merge for " + baseName);
+			}
+
+			PdfReader readerPage = new PdfReader(tempPath + "/" + baseName + "pg" + firstIdx + ".pdf");
+			Rectangle pagesize = readerPage.getPageSize(1);
+
+			document = new Document(pagesize);
+			PdfWriter Pdfwriter = PdfWriter.getInstance(document, new FileOutputStream(mergedFile));
+			document.open();
+			PdfContentByte cb = Pdfwriter.getDirectContent();
+
+			for (int comb = 0; comb < alHTML.size(); comb++){
+				String curr = (String) alHTML.get(comb);
+				if (!curr.equals("")){
+					PdfReader readerInner = new PdfReader(tempPath + "/" + baseName + "pg" + comb + ".pdf");
+					int ttlpage = readerInner.getNumberOfPages();
+					for (int innersub = 1; innersub <= ttlpage; innersub++){
+						PdfImportedPage pageInner = Pdfwriter.getImportedPage(readerInner, innersub);
+						cb.addTemplate(pageInner, .5f, 0);
+						document.newPage();
+					}
+				}
+			}
+		}
+		finally{
+			if (document != null){
+				try { document.close(); } catch (Exception ignore) {}
+			}
+			for (int remove = 0; remove < alHTML.size(); remove++){
+				String curr = (String) alHTML.get(remove);
+				if (!curr.equals("")){
+					File tempfile = new File(tempPath + "/" + baseName + "pg" + remove + ".pdf");
+					if (tempfile.exists()){
+						tempfile.delete();
+					}
+				}
+			}
+		}
+
+		return mergedFile;
+	}
+
+	/* PDFBox merge of the mandatory appendix onto the generated body, in order:
+	   Important Notice, Privacy Clause, Privacy Notice Eng, Privacy Notice BM
+	   (Old variants when cutOff=OLD). Re-opens are idempotent via the
+	   FWCMS_APPENDIX_MERGED metadata stamp, mirroring getPdf2.jsp. Fatal by
+	   requirement: any missing appendix or merge failure throws, so a policy is
+	   never streamed without its notices.
+
+	   Neither the Privacy Clause nor the Important Notice is a static file in
+	   the legacy EASC app — they are the JSP includes pop_incl_CFMKT.jsp and
+	   pop_incl_f2.jsp, rendered to PDF at print time and passed in here. The
+	   Privacy Clause falls back to the static APPENDIX_PRIVACY_CLAUSE when no
+	   rendered PDF is supplied; the Important Notice has NO static fallback
+	   (Important_Notice.pdf is retired), so a missing one while
+	   includeImportantNotice=true fails the document. */
+	private void mergeAppendix(String filename, String bannerPath, String cutOff, String privacyClausePdf,
+			String importantNoticePdf, boolean includeImportantNotice) throws Exception{
+
+		if (cutOff == null) cutOff = "";
+		cutOff = cutOff.trim().toUpperCase();
+		if (!cutOff.equals("OLD") && !cutOff.equals("NEW")){
+			cutOff = "NEW";
+		}
+
+		File policyFile = new File(filename);
+		if (!policyFile.exists()){
+			throw new Exception("[FWCMSPRINT] mergeAppendix: policy document missing: " + filename);
+		}
+
+		// already stamped for this cut-off => nothing to do (re-open)
+		PDDocument checkDoc = null;
+		try{
+			checkDoc = PDDocument.load(policyFile);
+			PDDocumentInformation info = checkDoc.getDocumentInformation();
+			if (info != null && cutOff.equals(info.getCustomMetadataValue(APPENDIX_MERGED_KEY))){
+				return;
+			}
+		}
+		catch (Exception ex){
+			// unreadable body is fatal — regenerating is the caller's job
+			throw new Exception("[FWCMSPRINT] mergeAppendix: cannot read policy document: " + filename, ex);
+		}
+		finally{
+			if (checkDoc != null){
+				try { checkDoc.close(); } catch (Exception ignore) {}
+			}
+		}
+
+		ArrayList appendixList = new ArrayList();
+		if (includeImportantNotice){
+			if (importantNoticePdf == null || importantNoticePdf.trim().equals("")
+				|| !new File(importantNoticePdf).exists()){
+				throw new Exception("[FWCMSPRINT] mergeAppendix: JSP-rendered Important Notice missing ["
+					+ importantNoticePdf + "] - no static fallback (Important_Notice.pdf is retired), failing the document");
+			}
+			appendixList.add(importantNoticePdf);
+			System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice from JSP-rendered PDF ["
+				+ importantNoticePdf + "]");
+		}else{
+			System.out.println("[FWCMSPRINT] mergeAppendix: Important Notice OMITTED (includeImportantNotice=false)");
+		}
+		if (privacyClausePdf != null && !privacyClausePdf.trim().equals("")
+			&& new File(privacyClausePdf).exists()){
+			appendixList.add(privacyClausePdf);
+			System.out.println("[FWCMSPRINT] mergeAppendix: Privacy Clause from JSP-rendered PDF ["
+				+ privacyClausePdf + "]");
+		}else{
+			String staticClause = bannerPath + "/" + APPENDIX_PRIVACY_CLAUSE;
+			appendixList.add(staticClause);
+			System.out.println("[FWCMSPRINT] mergeAppendix: Privacy Clause from static file ["
+				+ staticClause + "] (no JSP-rendered PDF supplied"
+				+ (privacyClausePdf == null ? "" : " or [" + privacyClausePdf + "] missing") + ")");
+		}
+		if (cutOff.equals("OLD")){
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_ENG_OLD);
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_BM_OLD);
+		}else{
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_ENG);
+			appendixList.add(bannerPath + "/" + APPENDIX_PRIVACY_BM);
+		}
+		String[] appendix = (String[]) appendixList.toArray(new String[appendixList.size()]);
+
+		PDFMergerUtility pdfMerger = new PDFMergerUtility();
+		ByteArrayOutputStream mergedBytes = new ByteArrayOutputStream();
+		pdfMerger.setDestinationStream(mergedBytes);
+		pdfMerger.addSource(policyFile);
+		for (int i = 0; i < appendix.length; i++){
+			File appendixFile = new File(appendix[i]);
+			if (!appendixFile.exists()){
+				throw new Exception("[FWCMSPRINT] mergeAppendix: mandatory appendix missing: " + appendix[i]);
+			}
+			pdfMerger.addSource(appendixFile);
+		}
+		pdfMerger.mergeDocuments(null);
+
+		PDDocument mergedDoc = null;
+		try{
+			mergedDoc = PDDocument.load(mergedBytes.toByteArray());
+			PDDocumentInformation info = mergedDoc.getDocumentInformation();
+			if (info == null){ info = new PDDocumentInformation(); }
+			info.setCustomMetadataValue(APPENDIX_MERGED_KEY, cutOff);
+			mergedDoc.setDocumentInformation(info);
+			mergedDoc.save(filename);
+		}
+		catch (Exception ex){
+			ex.printStackTrace();
+			throw new Exception("[FWCMSPRINT] mergeAppendix: merge/stamp failed for: " + filename, ex);
+		}
+		finally{
+			if (mergedDoc != null){
+				try { mergedDoc.close(); } catch (Exception ignore) {}
+			}
+		}
 	}
 %><%
 	response.setHeader("Cache-Control","no-cache, no-store, must-revalidate");	//HTTP 1.1
@@ -382,8 +814,8 @@
 				+ "The PDF will be rendered from this error HTML.");
 
 		/* 6. marker scrape + font normalisation (print helpers) */
-		Hashtable htMarkers	= FWCMSOnline.scrapeMarkers(HTML);
-		HTML				= FWCMSOnline.normaliseFontSizes(HTML);
+		Hashtable htMarkers	= scrapeMarkers(HTML);
+		HTML				= normaliseFontSizes(HTML);
 
 		String HEADER1		= (String)htMarkers.get("HEADER1");
 		String HEADER2		= (String)htMarkers.get("HEADER2");
@@ -405,15 +837,15 @@
 		{
 			/* 7.-8. policy schedule: schedule headers, PAGEBREAK split,
 			   one engine call per section, iText merge */
-			String headerHTML	= FWCMSOnline.buildHeaderHTML(howdenAgent, REF_MAINPAGE, REF_MAINPAGE1,
-															  CATEGORYMSG, CATEGORYMSG1, HEADER1, HEADER2);
-			String headerHTML2	= FWCMSOnline.buildHeaderHTML2(howdenAgent, CATEGORYMSG, CATEGORYMSG1,
-															   HEADER3, HEADER4, CNOTE);
-			String footerFirst	= howdenAgent ? FWCMSOnline.buildFooterHowden() : FWCMSOnline.buildFooterSubcode(SUBCODE);
+			String headerHTML	= buildHeaderHTML(common, howdenAgent, REF_MAINPAGE, REF_MAINPAGE1,
+														  CATEGORYMSG, CATEGORYMSG1, HEADER1, HEADER2);
+			String headerHTML2	= buildHeaderHTML2(common, howdenAgent, CATEGORYMSG, CATEGORYMSG1,
+														   HEADER3, HEADER4, CNOTE);
+			String footerFirst	= howdenAgent ? buildFooterHowden() : buildFooterSubcode(SUBCODE);
 			String footerRest	= footerFirst;
-			String footerBlank	= FWCMSOnline.buildFooterBlank();
+			String footerBlank	= buildFooterBlank();
 
-			ArrayList alHTML = FWCMSOnline.splitPagebreaks(HTML);
+			ArrayList alHTML = splitPagebreaks(HTML);
 			for (int len = 0; len < alHTML.size(); len++)
 			{
 				String curr = (String) alHTML.get(len);
@@ -432,15 +864,15 @@
 					}
 				}
 			}
-			mergedFile = FWCMSOnline.mergeSections(TEMP_PATH, baseName, alHTML);
+			mergedFile = mergeSections(TEMP_PATH, baseName, alHTML);
 			log(UUID, DOC, "render", "schedule sections=" + alHTML.size() + " merged into " + mergedFile);
 		}
 		else if (DOC.equals("FWIG_GL"))
 		{
 			/* guarantee letter: bare spacer header, PIDM footer on page 1 */
 			RP_html2pdf.generateHtml_custom_footer2(baseName + ".pdf", HTML,
-				"english","PORTRAIT",FWCMSOnline.buildHeaderHTML3(),"",
-				FWCMSOnline.buildFooterPIDM(SUBCODE),FWCMSOnline.buildFooterSubcode(SUBCODE),"80","60","30");
+				"english","PORTRAIT",buildHeaderHTML3(),"",
+				buildFooterPIDM(SUBCODE),buildFooterSubcode(SUBCODE),"80","60","30");
 			log(UUID, DOC, "render", "guarantee letter rendered to " + mergedFile);
 		}
 		else
@@ -449,8 +881,8 @@
 			   LANDSCAPE so the full FWIG/FWHS product + payment columns
 			   fit across the page */
 			RP_html2pdf.generateHtml_custom_footer2(baseName + ".pdf", HTML,
-				"english","LANDSCAPE",FWCMSOnline.buildHeaderHTML3(),"",
-				FWCMSOnline.buildFooterBlank(),FWCMSOnline.buildFooterBlank(),"40","90","50");
+				"english","LANDSCAPE",buildHeaderHTML3(),"",
+				buildFooterBlank(),buildFooterBlank(),"40","90","50");
 			log(UUID, DOC, "render", "receipt rendered to " + mergedFile);
 		}
 
@@ -494,7 +926,7 @@
 				wrPC.close();
 				rdPC.close();
 
-				String pcHTML = FWCMSOnline.normaliseFontSizes(pcResults.toString());
+				String pcHTML = normaliseFontSizes(pcResults.toString());
 				String pcLower = pcHTML.toLowerCase();
 				boolean pcLooksLikeError = pcLower.indexOf("document reference is missing") != -1
 					|| pcLower.indexOf("login") != -1 || pcLower.indexOf("logout") != -1;
@@ -504,8 +936,8 @@
 				/* letterhead header + blank footers, matching the guarantee
 				   letter's first-page treatment (logo_height=80) */
 				RP_html2pdf.generateHtml_custom_footer2(baseName + "-PC.pdf", pcHTML,
-					"english","PORTRAIT",FWCMSOnline.buildHeaderHTML3(),"",
-					FWCMSOnline.buildFooterBlank(),FWCMSOnline.buildFooterBlank(),"80","60","30");
+					"english","PORTRAIT",buildHeaderHTML3(),"",
+					buildFooterBlank(),buildFooterBlank(),"80","60","30");
 				privacyClausePdf = TEMP_PATH + "/" + baseName + "-PC.pdf";
 				log(UUID, DOC, "appendix", "Privacy Clause rendered from JSP to " + privacyClausePdf);
 			}
@@ -608,7 +1040,7 @@
 					wrIN.close();
 					rdIN.close();
 
-					String inHTML = FWCMSOnline.normaliseFontSizes(inResults.toString());
+					String inHTML = normaliseFontSizes(inResults.toString());
 					String inLower = inHTML.toLowerCase();
 					boolean inLooksLikeError = inLower.indexOf("document reference is missing") != -1
 						|| inLower.indexOf("login") != -1 || inLower.indexOf("logout") != -1;
@@ -622,8 +1054,8 @@
 					/* letterhead header + blank footers, matching the privacy
 					   clause's first-page treatment (logo_height=80) */
 					RP_html2pdf.generateHtml_custom_footer2(baseName + "-IN.pdf", inHTML,
-						"english","PORTRAIT",FWCMSOnline.buildHeaderHTML3(),"",
-						FWCMSOnline.buildFooterBlank(),FWCMSOnline.buildFooterBlank(),"80","60","30");
+						"english","PORTRAIT",buildHeaderHTML3(),"",
+						buildFooterBlank(),buildFooterBlank(),"80","60","30");
 					importantNoticePdf = TEMP_PATH + "/" + baseName + "-IN.pdf";
 					log(UUID, DOC, "appendix", "Important Notice rendered from JSP to " + importantNoticePdf);
 				}
@@ -639,7 +1071,7 @@
 			log(UUID, DOC, "appendix", "merging mandatory appendix (CUT_OFF=" + CUT_OFF
 				+ ", importantNotice=" + includeImportantNotice + ") into " + mergedFile
 				+ " privacyClausePdf=[" + privacyClausePdf + "] importantNoticePdf=[" + importantNoticePdf + "]");
-			FWCMSOnline.mergeAppendix(mergedFile, temp_banner_path, CUT_OFF, privacyClausePdf,
+			mergeAppendix(mergedFile, temp_banner_path, CUT_OFF, privacyClausePdf,
 				importantNoticePdf, includeImportantNotice);
 			log(UUID, DOC, "appendix", "appendix merge done");
 		}

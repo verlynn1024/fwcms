@@ -154,10 +154,9 @@
                    printing module reads the workers here, never from session.
                    table_vTable_EMPLOYEE layout (built by check_fwcms_online.jsp):
                    [2]=name [3]=nationality code [4]=gender [5]=passport
-                   [7]=IG amount (sum insured) [8]=gross premium. The
-                   nationality description is resolved at print time by
-                   FWCMSOnline.getFWIGGLPrintDataOnline. Each row also carries
-                   its policy (POLICY_ID) and its sequence inside that policy.
+                   [7]=IG amount (sum insured) [8]=gross premium. Each row
+                   also carries its policy (POLICY_ID) and its sequence
+                   inside that policy.
                    Re-run safe: the existing rows for this journey/type are
                    cleared first — and that clearing must happen BEFORE the
                    policies are reconciled, since the workers hold the foreign
