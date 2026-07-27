@@ -24,14 +24,14 @@
 
       0. PDPA 2010 consent — the worker-detail page makes the agent answer
          Yes/No to the Personal Data Protection Act 2010 marketing-consent
-         statement shown above the declaration tick. The answer is the
-         CHECK_IND indicator the legacy notice include pop_incl_f2.jsp was
-         keyed on (in the portal that notice is rendered by
-         /template/pop_fwcms_important_notice_print.jsp, which takes the same
-         indicator as its check_ind parameter). It arrives as the "check_ind"
-         parameter ("Y" / "N") and is kept on the session as
-         SES_FWCMS_CHECK_IND so the printing templates downstream of the
-         payment can read the agent's answer back.
+         statement shown above the declaration tick. The answer is CFMKT_IND,
+         the indicator the legacy Privacy Clause include pop_incl_CFMKT.jsp
+         branches on (in the portal that clause is rendered by
+         /template/pop_fwcms_privacy_clause_print.jsp). It arrives as the
+         "cfmkt_ind" parameter ("Y" / "N") and is kept on the session as
+         SES_FWCMS_CFMKT_IND, from where the post-payment issuance writes it
+         to TB_FWIGSCH / TB_FWHSSCH and the generator forwards it to the
+         Privacy Clause template.
 
       1. Immigration branch — when the Bestinet enquiry carried no immigration
          branch (blank / "N/A"), the worker-detail page shows a required
@@ -71,18 +71,18 @@
     String immiCode = common.setNullToString(request.getParameter("immi")).trim();
     if (immiCode.equalsIgnoreCase("N/A")) immiCode = "";
 
-    /* PDPA 2010 marketing-consent answer (the CHECK_IND indicator) from the
+    /* PDPA 2010 marketing-consent answer (the CFMKT_IND indicator) from the
        worker-detail page's Yes/No radios. The page will not POST without an
        answer, so anything other than "Y"/"N" here is a malformed request —
        fall back to "N" (no consent), the safer reading. Stashed on the
        session, not written to the tracking row: the class-table insert that
        carries it (CFMKT_IND on TB_FWIGSCH / TB_FWHSSCH) runs post-payment in
        pop_fwcms_issue_quotation.jsp, which reads it back from here. */
-    String checkInd = common.setNullToString(request.getParameter("check_ind")).trim().toUpperCase();
-    if (!checkInd.equals("Y") && !checkInd.equals("N")) checkInd = "N";
-    session.setAttribute("SES_FWCMS_CHECK_IND", checkInd);
+    String cfmktInd = common.setNullToString(request.getParameter("cfmkt_ind")).trim().toUpperCase();
+    if (!cfmktInd.equals("Y") && !cfmktInd.equals("N")) cfmktInd = "N";
+    session.setAttribute("SES_FWCMS_CFMKT_IND", cfmktInd);
     System.out.println("[FWCMSPRINT] UUID=" + FWCMS_UUID
-        + " stage=pdpa-consent CHECK_IND=" + checkInd);
+        + " stage=pdpa-consent CFMKT_IND=" + cfmktInd);
 
     if (!FWCMS_UUID.equals("")) {
         try {

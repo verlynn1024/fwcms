@@ -799,12 +799,14 @@
         </div>
         <div class="lb-card-body">
             <%-- PDPA 2010 marketing-consent check — the online-journey capture
-                 of the CHECK_IND indicator the legacy notice include
-                 pop_incl_f2.jsp was keyed on; in the portal that notice is
-                 rendered by /template/pop_fwcms_important_notice_print.jsp,
-                 which takes the same indicator as its check_ind parameter.
-                 Yes/No is mandatory (no default) and is POSTed to
-                 pop_fwcms_worker_detail_rep.jsp as "check_ind" on Make
+                 of CFMKT_IND, the indicator the legacy Privacy Clause include
+                 pop_incl_CFMKT.jsp branches on (Yes = the marketing-consent
+                 clause, No/blank = the standard clause; the CONTACT_TYPE="B"
+                 business-contact branch is selected separately). In the portal
+                 that clause is rendered by
+                 /template/pop_fwcms_privacy_clause_print.jsp, which takes the
+                 same indicator. Yes/No is mandatory (no default) and is POSTed
+                 to pop_fwcms_worker_detail_rep.jsp as "cfmkt_ind" on Make
                  Payment, ahead of the declaration tick below. --%>
             <div class="lb-consent">
                 <p class="lb-consent-text">
@@ -1270,9 +1272,10 @@ document.getElementById('btnCancel').addEventListener('click', function () {
    immigration branch onto the journey and inserts every product into the
    FWCMS main tables. Only on its "OK" do we redirect to the payment page. */
 document.getElementById('btnPay').addEventListener('click', function () {
-    /* PDPA 2010 consent — the CHECK_IND indicator (legacy pop_incl_f2.jsp,
-       now /template/pop_fwcms_important_notice_print.jsp). Mandatory, and
-       checked BEFORE the declaration tick because it sits above it. */
+    /* PDPA 2010 consent — the CFMKT_IND indicator that picks the Privacy
+       Clause branch (legacy pop_incl_CFMKT.jsp, now
+       /template/pop_fwcms_privacy_clause_print.jsp). Mandatory, and checked
+       BEFORE the declaration tick because it sits above it. */
     var consentEl = document.querySelector('input[name="pdpaConsent"]:checked');
     if (!consentEl) {
         Swal.fire({
@@ -1290,7 +1293,7 @@ document.getElementById('btnPay').addEventListener('click', function () {
         });
         return;
     }
-    var checkInd = consentEl.value;
+    var cfmktInd = consentEl.value;
 
     if (!document.getElementById('chkDecl').checked) {
         Swal.fire({
@@ -1347,7 +1350,7 @@ document.getElementById('btnPay').addEventListener('click', function () {
             didOpen: function () { Swal.showLoading(); }
         });
 
-        $.post('pop_fwcms_worker_detail_rep.jsp', { immi: immiVal, check_ind: checkInd })
+        $.post('pop_fwcms_worker_detail_rep.jsp', { immi: immiVal, cfmkt_ind: cfmktInd })
             .done(function (resp) {
                 var status = (resp || '').toString().trim();
                 if (status === 'LOGOUT') {

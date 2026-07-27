@@ -18,10 +18,16 @@
      data-access layer swapped to the Bestinet online-portal tables: the
      insured NAME comes from TB_FWCMS_ONLINE (EMPLOYER_NAME) and the cover
      note from TB_FWCMS_ONLINE_DTL (CNCODE) via the same DAO reads the
-     guarantee-letter template uses. The online journey does not capture a
-     marketing-consent flag, so CFMKT_IND / CONTACT_TYPE default to "" and
-     the standard Privacy Clause branch (1.1 - 1.5) renders - the same
-     branch an agent-issued FWIG document shows. TYPE is not MOTOR here, so
+     guarantee-letter template uses. CFMKT_IND is the agent's answer to the
+     Personal Data Protection Act 2010 consent shown above the declaration on
+     pop_fwcms_worker_detail.jsp: "Y" renders the marketing-consent branch,
+     "N" (or blank, e.g. a journey issued before that capture existed) the
+     standard Privacy Clause branch (1.1 - 1.5) - the same branch an
+     agent-issued FWIG document shows. CONTACT_TYPE stays "" so the legacy
+     "B" business-contact branch never renders here: that branch is the
+     Kurnia-branded contact block of pop_incl_CFMKT.jsp, driven by the
+     agent-side TB_CONTACT contact type, which the online journey has no
+     equivalent of. TYPE is not MOTOR here, so
      the vehicle line and the kib-address block never render, and GUARANTEE
      is forced "Y" so the in-body logo spacer is suppressed (the generator
      supplies the Liberty letterhead via the logo-height argument, as it
@@ -34,11 +40,26 @@
 	String TYPE_PARAM	= common.setNullToString(request.getParameter("TYPE"));
 	String UUID			= common.filterAttack(request.getParameter("UUID"));
 
+	/* pop_incl_CFMKT.jsp's branch selector: the PDPA 2010 marketing-consent
+	   answer. The generator's loopback GRAB is a cookie-less server-to-server
+	   request, so it forwards the indicator as a parameter; an on-screen
+	   preview has the session instead and falls back to what
+	   pop_fwcms_worker_detail_rep.jsp stashed there. Anything unrecognised
+	   (including a journey issued before the consent capture existed) reads
+	   as "N" - no consent, standard clause. */
+	String sCFMKT_IND_PARAM = common.setNullToString(request.getParameter("cfmkt_ind")).trim().toUpperCase();
+	if (!sCFMKT_IND_PARAM.equals("Y") && !sCFMKT_IND_PARAM.equals("N"))
+	{
+		sCFMKT_IND_PARAM = common.setNullToString((String)session.getAttribute("SES_FWCMS_CFMKT_IND")).trim().toUpperCase();
+	}
+	if (!sCFMKT_IND_PARAM.equals("Y")) sCFMKT_IND_PARAM = "N";
+
 	/* mirror gen_fwcms_pdf.jsp's [FWCMSPRINT] log prefix so the loopback GRAB
 	   and the template that answers it appear on the same grep. */
 	System.out.println("[FWCMSPRINT] UUID=" + UUID + " DOC=PRIVACY_CLAUSE stage=template-entry - "
 		+ "pop_fwcms_privacy_clause_print.jsp reached, method=" + request.getMethod()
-		+ " TYPE=[" + TYPE_PARAM + "] (GRAB=loopback, else on-screen preview)");
+		+ " TYPE=[" + TYPE_PARAM + "] cfmkt_ind=[" + sCFMKT_IND_PARAM
+		+ "] (GRAB=loopback, else on-screen preview)");
 
 	/* session guard for on-screen preview only - the generator's loopback
 	   GRAB is an internal server-to-server request without a cookie */
@@ -92,13 +113,14 @@
 		FWCMSOnline.takeDown();
 	}
 
-	/* Printing model - derived from the online tables. The online journey
-	   has no marketing-consent capture, so CFMKT_IND / CONTACT_TYPE stay ""
-	   (standard Privacy Clause branch), TYPE is not MOTOR, and GUARANTEE=Y
-	   suppresses the in-body logo spacer. */
+	/* Printing model - derived from the online tables. CFMKT_IND is the
+	   agent's PDPA 2010 consent answer resolved above ("Y" = marketing-consent
+	   branch, "N" = standard branch); CONTACT_TYPE stays "" so the legacy
+	   business-contact branch never fires here; TYPE is not MOTOR, and
+	   GUARANTEE=Y suppresses the in-body logo spacer. */
 	String TYPE			= "";		// vehicle type - FWIG is never MOTOR
-	String CFMKT_IND	= "";		// no marketing-consent flag in the online journey
-	String CONTACT_TYPE	= "";		// no business-branch consent flag either
+	String CFMKT_IND	= sCFMKT_IND_PARAM;	// PDPA 2010 consent, "Y" or "N"
+	String CONTACT_TYPE	= "";		// no business-contact branch in the online journey
 	String VEHNO		= "";		// motor only
 	String GUARANTEE	= "Y";		// letterhead supplied by the generator, skip spacer
 
