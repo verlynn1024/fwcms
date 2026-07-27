@@ -902,29 +902,8 @@
 			String privacyClausePdf = "";
 			try
 			{
-				/* pop_incl_CFMKT.jsp's branch selector: the PDPA 2010 consent
-				   answer captured on pop_fwcms_worker_detail.jsp. It is issued
-				   onto TB_FWIGSCH / TB_FWHSSCH.CFMKT_IND, so the print model
-				   carries it and a reprint from any later session still shows
-				   the branch the agent actually consented to - that is the
-				   authority, exactly as in the legacy preview. The session
-				   stash written by pop_fwcms_worker_detail_rep.jsp is only the
-				   fallback for the first render, before issuance has landed.
-				   The loopback is a cookie-less server-to-server request, so
-				   the template cannot read either itself - forward the
-				   indicator explicitly. Unknown = "N" (standard clause). */
-				String PC_CFMKT_IND = (htPrint == null) ? ""
-					: common.setNullToString((String)htPrint.get("CFMKT_IND"));
-				PC_CFMKT_IND = PC_CFMKT_IND.trim().toUpperCase();
-				if (!PC_CFMKT_IND.equals("Y") && !PC_CFMKT_IND.equals("N"))
-				{
-					PC_CFMKT_IND = common.setNullToString((String)session.getAttribute("SES_FWCMS_CFMKT_IND")).trim().toUpperCase();
-				}
-				if (!PC_CFMKT_IND.equals("Y")) PC_CFMKT_IND = "N";
-
 				String pcData  = URLEncoder.encode("TYPE") + "=" + URLEncoder.encode("GRAB");
 				pcData += "&" + URLEncoder.encode("UUID") + "=" + URLEncoder.encode(UUID);
-				pcData += "&" + URLEncoder.encode("cfmkt_ind") + "=" + URLEncoder.encode(PC_CFMKT_IND);
 
 				String pcURL = server_root + request.getContextPath()
 					+ "/bestinet_online/template/pop_fwcms_privacy_clause_print.jsp?option=print";

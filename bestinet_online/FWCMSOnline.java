@@ -1551,11 +1551,9 @@ public class FWCMSOnline extends DB_Contact{
 		htFWIG.put("BUSINESS_DISPLAY",		businessDisplay);
 
 		/* SCH keys on UKEY2, not UKEY. Sum insured / FWCMS reference feed both
-		   documents; the premium breakdown feeds the schedule's box only.
-		   CFMKT_IND is the PDPA 2010 marketing-consent answer, read back for
-		   the Privacy Clause branch exactly as the legacy preview does. */
+		   documents; the premium breakdown feeds the schedule's box only. */
 		myQuery = "SELECT SUMINS,FWCMSREFNO,GPREM,STAXAMT,STAXPCT,STAMPDUTY,"+
-				  "TOTPREM,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES,BCHRGAMT,CFMKT_IND "+
+				  "TOTPREM,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES,BCHRGAMT "+
 				  "FROM TB_FWIGSCH WHERE UKEY2=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
@@ -1573,7 +1571,6 @@ public class FWCMSOnline extends DB_Contact{
 			htFWIG.put("REBATEPCT",		nz(rs.getString("REBATEPCT")));
 			htFWIG.put("REBATEAMT",		nz(rs.getString("REBATEAMT")));
 			htFWIG.put("STAMP_FEES",	nz(rs.getString("STAMP_FEES")));
-			htFWIG.put("CFMKT_IND",		nz(rs.getString("CFMKT_IND")));
 		}
 		rs.close();
 		pstmt.close();
@@ -2026,7 +2023,7 @@ public class FWCMSOnline extends DB_Contact{
 		   POL_CLAUSE feeds the Clauses / Warranties listing. */
 		String polClause = "";
 		myQuery = "SELECT SUMINS,FWCMSREFNO,GPREM,STAXPCT,STAXAMT,SERVICE_FEE,"+
-				  "FWCMS_FEE,LEVYAMT,STAMPDUTY,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES,POL_CLAUSE,CFMKT_IND "+
+				  "FWCMS_FEE,LEVYAMT,STAMPDUTY,NETPREM,REBATEPCT,REBATEAMT,STAMP_FEES,POL_CLAUSE "+
 				  "FROM TB_FWHSSCH WHERE UKEY2=? WITH UR";
 		pstmt = myConn.prepareStatement(myQuery);
 		pstmt.setString(1, CNCODE);
@@ -2045,7 +2042,6 @@ public class FWCMSOnline extends DB_Contact{
 			htFWHS.put("REBATEPCT",		nz(rs.getString("REBATEPCT")));
 			htFWHS.put("REBATEAMT",		nz(rs.getString("REBATEAMT")));
 			htFWHS.put("STAMP_FEES",	nz(rs.getString("STAMP_FEES")));
-			htFWHS.put("CFMKT_IND",		nz(rs.getString("CFMKT_IND")));
 			polClause = nz(rs.getString("POL_CLAUSE"));
 		}
 		rs.close();

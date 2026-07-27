@@ -411,9 +411,11 @@
     /* PDPA 2010 marketing consent — the CFMKT_IND indicator captured on the
        worker-detail page (Yes/No above the declaration) and stashed on the
        session by pop_fwcms_worker_detail_rep.jsp. It is written as CFMKT_IND
-       on TB_FWIGSCH / TB_FWHSSCH, the same column the legacy preview reads
-       back to pick the Privacy Clause branch. Absent (an older session that
-       never passed the new page) = "N", the pre-existing hardcoded value. */
+       on TB_FWIGSCH / TB_FWHSSCH, the same column the legacy preview reads —
+       here it is a record of the agent's answer, not a print switch: the
+       portal's Privacy Clause always renders the business-contact branch.
+       Absent (an older session that never passed the new page) = "N", the
+       pre-existing hardcoded value. */
     String IQ_CFMKT_IND = commonIQ.setNullToString((String) session.getAttribute("SES_FWCMS_CFMKT_IND"));
     if (!IQ_CFMKT_IND.equals("Y")) IQ_CFMKT_IND = "N";
 

@@ -799,15 +799,17 @@
         </div>
         <div class="lb-card-body">
             <%-- PDPA 2010 marketing-consent check — the online-journey capture
-                 of CFMKT_IND, the indicator the legacy Privacy Clause include
-                 pop_incl_CFMKT.jsp branches on (Yes = the marketing-consent
-                 clause, No/blank = the standard clause; the CONTACT_TYPE="B"
-                 business-contact branch is selected separately). In the portal
-                 that clause is rendered by
-                 /template/pop_fwcms_privacy_clause_print.jsp, which takes the
-                 same indicator. Yes/No is mandatory (no default) and is POSTed
-                 to pop_fwcms_worker_detail_rep.jsp as "cfmkt_ind" on Make
-                 Payment, ahead of the declaration tick below. --%>
+                 of CFMKT_IND, the marketing-consent indicator of the legacy
+                 Privacy Clause include pop_incl_CFMKT.jsp. The answer is
+                 RECORDED, not rendered: the portal's Privacy Clause
+                 (/template/pop_fwcms_privacy_clause_print.jsp) always renders
+                 the CONTACT_TYPE="B" business-contact branch, since every
+                 Bestinet quotation is an employer policy, and that branch is
+                 tested ahead of CFMKT_IND. The consent is still captured and
+                 issued onto TB_FWIGSCH / TB_FWHSSCH.CFMKT_IND so the agent's
+                 answer is on record. Yes/No is mandatory (no default) and is
+                 POSTed to pop_fwcms_worker_detail_rep.jsp as "cfmkt_ind" on
+                 Make Payment, ahead of the declaration tick below. --%>
             <div class="lb-consent">
                 <p class="lb-consent-text">
                     <strong>Personal Data Protection Act 2010</strong> — You consent to us using your
@@ -1272,10 +1274,9 @@ document.getElementById('btnCancel').addEventListener('click', function () {
    immigration branch onto the journey and inserts every product into the
    FWCMS main tables. Only on its "OK" do we redirect to the payment page. */
 document.getElementById('btnPay').addEventListener('click', function () {
-    /* PDPA 2010 consent — the CFMKT_IND indicator that picks the Privacy
-       Clause branch (legacy pop_incl_CFMKT.jsp, now
-       /template/pop_fwcms_privacy_clause_print.jsp). Mandatory, and checked
-       BEFORE the declaration tick because it sits above it. */
+    /* PDPA 2010 consent — the CFMKT_IND indicator, recorded on the issued
+       policy (see the card markup above). Mandatory, and checked BEFORE the
+       declaration tick because it sits above it. */
     var consentEl = document.querySelector('input[name="pdpaConsent"]:checked');
     if (!consentEl) {
         Swal.fire({
