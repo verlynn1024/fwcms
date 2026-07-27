@@ -114,7 +114,7 @@
          eCover save (integration doc section 3). Returns the new UKEY. ── */
     private String iqIssueFWIG(DB_FWIG dbFWIG, common comm, Hashtable htTXN,
                                Hashtable htDTL, ArrayList alWorkers, String USERID,
-                               String CLIENTID) throws Exception{
+                               String CLIENTID, String CFMKT_IND) throws Exception{
 
         String PRINCIPLE = FWCMSOnline.GL_PRINCIPLE_CODE;
         String ACCODE    = comm.getKey((String) htTXN.get("ACCODE"), " ");
@@ -253,7 +253,7 @@
             dbFWIG.Insert_FWIGSCH_CFMKT(sUKEY, "RM", "RM", 1.00, dSUMINS, dSUMINS,
                 dGPREM, dGPREM, dREBATE, iqBackOutPct(dREBATE, dGPREM), dSTAX, dSTAXPCT,
                 dSTAMP, dNETPREM, 0, 0, 0, 0, dNETPREM, dGPREM, 0, 0,
-                "N", NOW14, FWCMSREF, "", "", "0.00");
+                CFMKT_IND, NOW14, FWCMSREF, "", "", "0.00");
 
             dbFWIG.conCommit();
         }
@@ -274,7 +274,7 @@
          the journey's issued FWIG cover note. Returns the new UKEY. ── */
     private String iqIssueFWHS(DB_FWHS dbFWHS, common comm, Hashtable htTXN,
                                Hashtable htDTL, ArrayList alWorkers, String USERID,
-                               String IG_NO, String CLIENTID) throws Exception{
+                               String IG_NO, String CLIENTID, String CFMKT_IND) throws Exception{
 
         String PRINCIPLE = FWCMSOnline.GL_PRINCIPLE_CODE;
         String ACCODE    = comm.getKey((String) htTXN.get("ACCODE"), " ");
@@ -346,7 +346,7 @@
             dbFWHS.Insert_FWHSSCH(sUKEY, dSUMINS, dGPREM, dGPREM, dREBATE,
                 iqBackOutPct(dREBATE, dGPREM), dSTAX, dSTAXPCT, dSVCFEE, 0,
                 dSTAMP, dNETPREM, 0, 0, 0, 0, dNETPREM, dGPREM, 0, 0,
-                "", 0, alWorkers.size(), "", "N", NOW14, FWCMSREF, "",
+                "", 0, alWorkers.size(), "", CFMKT_IND, NOW14, FWCMSREF, "",
                 "", "", "", "", "0.00");
 
             /* 4. TB_FWHSITEM — one 25-column row per worker, keyed
@@ -408,6 +408,15 @@
     String IQ_USERID = commonIQ.setNullToString((String) session.getAttribute("SESUSERID"));
     String IQ_UUID   = commonIQ.setNullToString((String) session.getAttribute("SES_FWCMS_ONLINE_UUID"));
 
+    /* PDPA 2010 marketing consent — the CHECK_IND indicator captured on the
+       worker-detail page (Yes/No above the declaration) and stashed on the
+       session by pop_fwcms_worker_detail_rep.jsp. It is written as CFMKT_IND
+       on TB_FWIGSCH / TB_FWHSSCH, the same column the legacy preview reads
+       back to pick the Privacy Clause branch. Absent (an older session that
+       never passed the new page) = "N", the pre-existing hardcoded value. */
+    String IQ_CFMKT_IND = commonIQ.setNullToString((String) session.getAttribute("SES_FWCMS_CHECK_IND"));
+    if (!IQ_CFMKT_IND.equals("Y")) IQ_CFMKT_IND = "N";
+
     if (!IQ_UUID.equals(""))
     {
         try
@@ -456,7 +465,7 @@
                         if (sInsType.equals("I"))
                         {
                             sUKEYiq = iqIssueFWIG(dbFWIGiq, commonIQ, htTXNiq, htDTLiq,
-                                                  alWorkersIq, IQ_USERID, sCLIENTIDiq);
+                                                  alWorkersIq, IQ_USERID, sCLIENTIDiq, IQ_CFMKT_IND);
                         }
                         else
                         {
@@ -470,7 +479,7 @@
                                 if (!sIGKey.equals("") && !sIGKey.startsWith("MCK")) sIGNO = sIGKey;
                             }
                             sUKEYiq = iqIssueFWHS(dbFWHSiq, commonIQ, htTXNiq, htDTLiq,
-                                                  alWorkersIq, IQ_USERID, sIGNO, sCLIENTIDiq);
+                                                  alWorkersIq, IQ_USERID, sIGNO, sCLIENTIDiq, IQ_CFMKT_IND);
                         }
 
                         /* stamp the linkage back onto the online DTL row (POLICY_NO

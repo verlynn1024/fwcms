@@ -798,6 +798,32 @@
             <h2>Declaration</h2>
         </div>
         <div class="lb-card-body">
+            <%-- PDPA 2010 marketing-consent check — the online-journey capture
+                 of the CHECK_IND indicator the legacy notice include
+                 pop_incl_f2.jsp was keyed on; in the portal that notice is
+                 rendered by /template/pop_fwcms_important_notice_print.jsp,
+                 which takes the same indicator as its check_ind parameter.
+                 Yes/No is mandatory (no default) and is POSTed to
+                 pop_fwcms_worker_detail_rep.jsp as "check_ind" on Make
+                 Payment, ahead of the declaration tick below. --%>
+            <div class="lb-consent">
+                <p class="lb-consent-text">
+                    <strong>Personal Data Protection Act 2010</strong> — You consent to us using your
+                    personal data to contact you on Liberty General Insurance Berhad, Formerly known as
+                    AmGeneral Insurance Berhad products and promotions.
+                </p>
+                <div class="lb-consent-options">
+                    <label class="lb-consent-opt">
+                        <input type="radio" name="pdpaConsent" id="rdoConsentYes" value="Y">
+                        <span>Yes</span>
+                    </label>
+                    <label class="lb-consent-opt">
+                        <input type="radio" name="pdpaConsent" id="rdoConsentNo" value="N">
+                        <span>No</span>
+                    </label>
+                </div>
+            </div>
+
             <div class="lb-declaration">
                 <input type="checkbox" id="chkDecl">
                 <label for="chkDecl">
@@ -1244,6 +1270,28 @@ document.getElementById('btnCancel').addEventListener('click', function () {
    immigration branch onto the journey and inserts every product into the
    FWCMS main tables. Only on its "OK" do we redirect to the payment page. */
 document.getElementById('btnPay').addEventListener('click', function () {
+    /* PDPA 2010 consent — the CHECK_IND indicator (legacy pop_incl_f2.jsp,
+       now /template/pop_fwcms_important_notice_print.jsp). Mandatory, and
+       checked BEFORE the declaration tick because it sits above it. */
+    var consentEl = document.querySelector('input[name="pdpaConsent"]:checked');
+    if (!consentEl) {
+        Swal.fire({
+            title: 'PDPA Consent Required',
+            text: 'Please select Yes or No for the Personal Data Protection Act 2010 consent before proceeding.',
+            icon: 'warning',
+            iconColor: '#FFD000',
+            confirmButtonColor: '#0D014B'
+        }).then(function () {
+            var firstOpt = document.getElementById('rdoConsentYes');
+            if (firstOpt) {
+                firstOpt.focus();
+                firstOpt.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        });
+        return;
+    }
+    var checkInd = consentEl.value;
+
     if (!document.getElementById('chkDecl').checked) {
         Swal.fire({
             title: 'Declaration Required',
@@ -1299,7 +1347,7 @@ document.getElementById('btnPay').addEventListener('click', function () {
             didOpen: function () { Swal.showLoading(); }
         });
 
-        $.post('pop_fwcms_worker_detail_rep.jsp', { immi: immiVal })
+        $.post('pop_fwcms_worker_detail_rep.jsp', { immi: immiVal, check_ind: checkInd })
             .done(function (resp) {
                 var status = (resp || '').toString().trim();
                 if (status === 'LOGOUT') {
